@@ -1,0 +1,292 @@
+[33mcommit 0028f61838219c651ae5c9318051cda3ef6ddb0b[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmaster[m[33m, [m[1;31morigin/master[m[33m)[m
+Author: pskislamic0-code <pskislamic0@gmail.com>
+Date:   Wed Apr 22 15:10:20 2026 +0500
+
+    fix: whatsapp bot + sheets + cleanup + OCR support
+
+ .gitignore                                         |   12 [32m+[m[31m-[m
+ .wwebjs_cache/2.3000.1035141891.html               |   81 [31m-[m
+ .wwebjs_cache/2.3000.1036094556.html               |   81 [31m-[m
+ .../session-dispatch-bot/BrowserMetrics-spare.pma  |  Bin [31m4194304[m -> [32m0[m bytes
+ .../CertificateRevocation/10429/LICENSE            |   27 [31m-[m
+ .../10429/_metadata/verified_contents.json         |    1 [31m-[m
+ .../CertificateRevocation/10429/crl-set            |  Bin [31m878611[m -> [32m0[m bytes
+ .../CertificateRevocation/10429/manifest.json      |    5 [31m-[m
+ .../session-dispatch-bot/Crashpad/metadata         |    0
+ .../session-dispatch-bot/Crashpad/settings.dat     |  Bin [31m40[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/Account Web Data  |  Bin [31m77824[m -> [32m0[m bytes
+ .../Default/Account Web Data-journal               |    0
+ .../Default/Affiliation Database                   |  Bin [31m53248[m -> [32m0[m bytes
+ .../Default/Affiliation Database-journal           |    0
+ .../Default/AutofillAiModelCache/LOCK              |    0
+ .../Default/AutofillAiModelCache/LOG               |    0
+ .../Default/AutofillAiModelCache/LOG.old           |    0
+ .../Default/AutofillStrikeDatabase/LOCK            |    0
+ .../Default/AutofillStrikeDatabase/LOG             |    0
+ .../Default/AutofillStrikeDatabase/LOG.old         |    0
+ .../Default/BookmarkMergedSurfaceOrdering          |    2 [31m-[m
+ .../Default/BudgetDatabase/LOCK                    |    0
+ .../Default/BudgetDatabase/LOG                     |    0
+ .../Default/BudgetDatabase/LOG.old                 |    0
+ .../Default/Cache/Cache_Data/index                 |    1 [31m-[m
+ .../Default/Cache/Cache_Data/sqldb0                |  Bin [31m11468800[m -> [32m0[m bytes
+ .../Default/Cache/Cache_Data/sqldb0-wal            |  Bin [31m1800472[m -> [32m0[m bytes
+ .../Default/Cache/Cache_Data/sqldb1                |  Bin [31m10715136[m -> [32m0[m bytes
+ .../Default/Cache/Cache_Data/sqldb1-wal            |  Bin [31m2228952[m -> [32m0[m bytes
+ .../Default/Cache/Cache_Data/sqldb2                |  Bin [31m4325376[m -> [32m0[m bytes
+ .../Default/Cache/Cache_Data/sqldb2-wal            |  Bin [31m2158912[m -> [32m0[m bytes
+ .../Default/Cache/No_Vary_Search/journal.baj       |    1 [31m-[m
+ .../Default/Cache/No_Vary_Search/snapshot.baf      |  Bin [31m20[m -> [32m0[m bytes
+ .../Default/ClientCertificates/LOCK                |    0
+ .../Default/ClientCertificates/LOG                 |    0
+ .../Default/ClientCertificates/LOG.old             |    0
+ .../Code Cache/pc/5bb[a`6`2`2e2.ue5-ba-[[u0@;`2.db |  Bin [31m36659200[m -> [32m0[m bytes
+ .../pc/5bb[a`6`2`2e2.ue5-ba-[[u0@;`2.journal       |    0
+ .../Default/Collaboration/MessageDB                |  Bin [31m20480[m -> [32m0[m bytes
+ .../Default/Collaboration/MessageDB-journal        |    0
+ .../.wwebjs_auth/session-dispatch-bot/Default/DIPS |  Bin [31m36864[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/DIPS-wal          |  Bin [31m49472[m -> [32m0[m bytes
+ .../Default/DataSharing/DataSharingDB              |  Bin [31m20480[m -> [32m0[m bytes
+ .../Default/DataSharing/DataSharingDB-journal      |    0
+ .../Default/DawnGraphiteCache/data_0               |  Bin [31m8192[m -> [32m0[m bytes
+ .../Default/DawnGraphiteCache/data_1               |  Bin [31m270336[m -> [32m0[m bytes
+ .../Default/DawnGraphiteCache/data_2               |  Bin [31m8192[m -> [32m0[m bytes
+ .../Default/DawnGraphiteCache/data_3               |  Bin [31m8192[m -> [32m0[m bytes
+ .../Default/DawnGraphiteCache/index                |  Bin [31m262512[m -> [32m0[m bytes
+ .../Default/DawnWebGPUCache/data_0                 |  Bin [31m8192[m -> [32m0[m bytes
+ .../Default/DawnWebGPUCache/data_1                 |  Bin [31m270336[m -> [32m0[m bytes
+ .../Default/DawnWebGPUCache/data_2                 |  Bin [31m8192[m -> [32m0[m bytes
+ .../Default/DawnWebGPUCache/data_3                 |  Bin [31m8192[m -> [32m0[m bytes
+ .../Default/DawnWebGPUCache/index                  |  Bin [31m262512[m -> [32m0[m bytes
+ .../Default/Extension Rules/000003.log             |  Bin [31m76[m -> [32m0[m bytes
+ .../Default/Extension Rules/CURRENT                |    1 [31m-[m
+ .../Default/Extension Rules/LOCK                   |    0
+ .../Default/Extension Rules/LOG                    |    2 [31m-[m
+ .../Default/Extension Rules/MANIFEST-000001        |  Bin [31m41[m -> [32m0[m bytes
+ .../Default/Extension Scripts/000003.log           |  Bin [31m38[m -> [32m0[m bytes
+ .../Default/Extension Scripts/CURRENT              |    1 [31m-[m
+ .../Default/Extension Scripts/LOCK                 |    0
+ .../Default/Extension Scripts/LOG                  |    2 [31m-[m
+ .../Default/Extension Scripts/MANIFEST-000001      |  Bin [31m41[m -> [32m0[m bytes
+ .../Default/Extension State/000003.log             |  Bin [31m114[m -> [32m0[m bytes
+ .../Default/Extension State/CURRENT                |    1 [31m-[m
+ .../Default/Extension State/LOCK                   |    0
+ .../Default/Extension State/LOG                    |    3 [31m-[m
+ .../Default/Extension State/LOG.old                |    3 [31m-[m
+ .../Default/Extension State/MANIFEST-000001        |  Bin [31m41[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/Favicons          |  Bin [31m28672[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/Favicons-journal  |    0
+ .../Feature Engagement Tracker/AvailabilityDB/LOCK |    0
+ .../Feature Engagement Tracker/AvailabilityDB/LOG  |    0
+ .../AvailabilityDB/LOG.old                         |    0
+ .../Feature Engagement Tracker/EventDB/LOCK        |    0
+ .../Default/Feature Engagement Tracker/EventDB/LOG |    0
+ .../Feature Engagement Tracker/EventDB/LOG.old     |    0
+ .../Default/GCM Store/000003.log                   |  Bin [31m1766[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/GCM Store/CURRENT |    1 [31m-[m
+ .../session-dispatch-bot/Default/GCM Store/LOCK    |    0
+ .../session-dispatch-bot/Default/GCM Store/LOG     |    3 [31m-[m
+ .../session-dispatch-bot/Default/GCM Store/LOG.old |    3 [31m-[m
+ .../Default/GCM Store/MANIFEST-000001              |  Bin [31m41[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/GPUCache/data_0   |  Bin [31m45056[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/GPUCache/data_1   |  Bin [31m270336[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/GPUCache/data_2   |  Bin [31m1056768[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/GPUCache/data_3   |  Bin [31m8192[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/GPUCache/index    |  Bin [31m262512[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/History           |  Bin [31m163840[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/History-journal   |  Bin [31m8720[m -> [32m0[m bytes
+ .../000097.log                                     |  Bin [31m810381[m -> [32m0[m bytes
+ .../000099.ldb                                     |  Bin [31m2187919[m -> [32m0[m bytes
+ .../000100.ldb                                     |  Bin [31m2177695[m -> [32m0[m bytes
+ .../000101.ldb                                     |  Bin [31m2256790[m -> [32m0[m bytes
+ .../000102.ldb                                     |  Bin [31m370152[m -> [32m0[m bytes
+ .../CURRENT                                        |    1 [31m-[m
+ .../LOCK                                           |    0
+ .../https_web.whatsapp.com_0.indexeddb.leveldb/LOG |    3 [31m-[m
+ .../LOG.old                                        |   18 [31m-[m
+ .../MANIFEST-000001                                |  Bin [31m9789[m -> [32m0[m bytes
+ .../.wwebjs_auth/session-dispatch-bot/Default/LOCK |    0
+ data/.wwebjs_auth/session-dispatch-bot/Default/LOG |    0
+ .../session-dispatch-bot/Default/LOG.old           |    0
+ .../Default/Local Storage/leveldb/000004.log       |  Bin [31m28781[m -> [32m0[m bytes
+ .../Default/Local Storage/leveldb/000005.ldb       |  Bin [31m20587[m -> [32m0[m bytes
+ .../Default/Local Storage/leveldb/CURRENT          |    1 [31m-[m
+ .../Default/Local Storage/leveldb/LOCK             |    0
+ .../Default/Local Storage/leveldb/LOG              |    3 [31m-[m
+ .../Default/Local Storage/leveldb/LOG.old          |    3 [31m-[m
+ .../Default/Local Storage/leveldb/MANIFEST-000001  |  Bin [31m161[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/Login Data        |  Bin [31m40960[m -> [32m0[m bytes
+ .../Default/Login Data For Account                 |  Bin [31m40960[m -> [32m0[m bytes
+ .../Default/Login Data For Account-journal         |    0
+ .../Default/Login Data-journal                     |    0
+ .../Default/Network Action Predictor               |  Bin [31m53248[m -> [32m0[m bytes
+ .../Default/Network Action Predictor-journal       |    0
+ .../session-dispatch-bot/Default/Network/Cookies   |  Bin [31m20480[m -> [32m0[m bytes
+ .../Default/Network/Cookies-journal                |    0
+ .../Default/Network/Device Bound Sessions          |  Bin [31m20480[m -> [32m0[m bytes
+ .../Default/Network/Device Bound Sessions-journal  |    0
+ .../Default/Network/Network Persistent State       |    1 [31m-[m
+ .../Default/Network/NetworkDataMigrated            |    0
+ .../Default/Network/Reporting and NEL              |  Bin [31m36864[m -> [32m0[m bytes
+ .../Default/Network/Reporting and NEL-journal      |    0
+ .../Default/Network/SCT Auditing Pending Reports   |    1 [31m-[m
+ .../Default/Network/TransportSecurity              |    1 [31m-[m
+ .../Default/Network/Trust Tokens                   |  Bin [31m36864[m -> [32m0[m bytes
+ .../Default/Network/Trust Tokens-journal           |    0
+ .../Default/PersistentOriginTrials/LOCK            |    0
+ .../Default/PersistentOriginTrials/LOG             |    0
+ .../Default/PersistentOriginTrials/LOG.old         |    0
+ .../session-dispatch-bot/Default/Preferences       |    1 [31m-[m
+ .../session-dispatch-bot/Default/PreferredApps     |    1 [31m-[m
+ .../session-dispatch-bot/Default/README            |    1 [31m-[m
+ .../Safe Browsing Network/NetworkDataMigrated      |    0
+ .../Safe Browsing Network/Safe Browsing Cookies    |  Bin [31m20480[m -> [32m0[m bytes
+ .../Safe Browsing Cookies-journal                  |    0
+ .../Default/Secure Preferences                     |    1 [31m-[m
+ .../Segmentation Platform/SegmentInfoDB/LOCK       |    0
+ .../Segmentation Platform/SegmentInfoDB/LOG        |    0
+ .../Segmentation Platform/SegmentInfoDB/LOG.old    |    0
+ .../Default/Segmentation Platform/SignalDB/LOCK    |    0
+ .../Default/Segmentation Platform/SignalDB/LOG     |    0
+ .../Default/Segmentation Platform/SignalDB/LOG.old |    0
+ .../SignalStorageConfigDB/LOCK                     |    0
+ .../SignalStorageConfigDB/LOG                      |    0
+ .../SignalStorageConfigDB/LOG.old                  |    0
+ .../session-dispatch-bot/Default/ServerCertificate |  Bin [31m20480[m -> [32m0[m bytes
+ .../Default/ServerCertificate-journal              |    0
+ .../2f15020d-0564-43d9-b67d-14b1ec56caed/index     |  Bin [31m24[m -> [32m0[m bytes
+ .../index-dir/the-real-index                       |  Bin [31m48[m -> [32m0[m bytes
+ .../3bc0f562-4a64-492e-9c60-6d74e9fd945e/index     |  Bin [31m24[m -> [32m0[m bytes
+ .../index-dir/the-real-index                       |  Bin [31m48[m -> [32m0[m bytes
+ .../2a2b7cbbc61290b4_0                             |  Bin [31m315[m -> [32m0[m bytes
+ .../6ea66fa5b36b4157_0                             |  Bin [31m407[m -> [32m0[m bytes
+ .../92172a9e586cee2a_0                             |  Bin [31m474[m -> [32m0[m bytes
+ .../e6039a61e4d2a504_0                             |  Bin [31m841[m -> [32m0[m bytes
+ .../7c43d294-4f92-4ca7-8df1-0eafe8a6e839/index     |  Bin [31m24[m -> [32m0[m bytes
+ .../index-dir/the-real-index                       |  Bin [31m144[m -> [32m0[m bytes
+ .../index.txt                                      |  Bin [31m415[m -> [32m0[m bytes
+ .../Default/Service Worker/Database/000003.log     |  Bin [31m5290[m -> [32m0[m bytes
+ .../Default/Service Worker/Database/CURRENT        |    1 [31m-[m
+ .../Default/Service Worker/Database/LOCK           |    0
+ .../Default/Service Worker/Database/LOG            |    3 [31m-[m
+ .../Default/Service Worker/Database/LOG.old        |    3 [31m-[m
+ .../Service Worker/Database/MANIFEST-000001        |  Bin [31m41[m -> [32m0[m bytes
+ .../Service Worker/ScriptCache/013888a1cda32b90_0  |  Bin [31m26637[m -> [32m0[m bytes
+ .../Service Worker/ScriptCache/013888a1cda32b90_1  |  Bin [31m16745[m -> [32m0[m bytes
+ .../Service Worker/ScriptCache/297ecea5cebb5dfe_0  |  Bin [31m5230162[m -> [32m0[m bytes
+ .../Service Worker/ScriptCache/297ecea5cebb5dfe_1  |  Bin [31m9432969[m -> [32m0[m bytes
+ .../Default/Service Worker/ScriptCache/index       |  Bin [31m24[m -> [32m0[m bytes
+ .../ScriptCache/index-dir/the-real-index           |  Bin [31m96[m -> [32m0[m bytes
+ .../Default/Session Storage/000003.log             |  Bin [31m1533[m -> [32m0[m bytes
+ .../Default/Session Storage/CURRENT                |    1 [31m-[m
+ .../Default/Session Storage/LOCK                   |    0
+ .../Default/Session Storage/LOG                    |    3 [31m-[m
+ .../Default/Session Storage/LOG.old                |    3 [31m-[m
+ .../Default/Session Storage/MANIFEST-000001        |  Bin [31m41[m -> [32m0[m bytes
+ .../Default/Sessions/Session_13417917259760769     |  Bin [31m2609[m -> [32m0[m bytes
+ .../Default/Sessions/Tabs_13419080632203845        |  Bin [31m13646[m -> [32m0[m bytes
+ .../Default/Sessions/Tabs_13420249814589702        |  Bin [31m15358[m -> [32m0[m bytes
+ .../Default/Shared Dictionary/cache/index          |  Bin [31m24[m -> [32m0[m bytes
+ .../cache/index-dir/the-real-index                 |  Bin [31m48[m -> [32m0[m bytes
+ .../Default/Shared Dictionary/db                   |  Bin [31m45056[m -> [32m0[m bytes
+ .../Default/Shared Dictionary/db-journal           |    0
+ .../session-dispatch-bot/Default/SharedStorage     |  Bin [31m4096[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/SharedStorage-wal |    0
+ .../session-dispatch-bot/Default/Shortcuts         |  Bin [31m20480[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/Shortcuts-journal |    0
+ .../Site Characteristics Database/000003.log       |  Bin [31m184[m -> [32m0[m bytes
+ .../Default/Site Characteristics Database/CURRENT  |    1 [31m-[m
+ .../Default/Site Characteristics Database/LOCK     |    0
+ .../Default/Site Characteristics Database/LOG      |    3 [31m-[m
+ .../Default/Site Characteristics Database/LOG.old  |    3 [31m-[m
+ .../Site Characteristics Database/MANIFEST-000001  |  Bin [31m41[m -> [32m0[m bytes
+ .../Default/Sync Data/LevelDB/000003.log           |  Bin [31m137[m -> [32m0[m bytes
+ .../Default/Sync Data/LevelDB/CURRENT              |    1 [31m-[m
+ .../Default/Sync Data/LevelDB/LOCK                 |    0
+ .../Default/Sync Data/LevelDB/LOG                  |    3 [31m-[m
+ .../Default/Sync Data/LevelDB/LOG.old              |    3 [31m-[m
+ .../Default/Sync Data/LevelDB/MANIFEST-000001      |  Bin [31m41[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/Top Sites         |  Bin [31m20480[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/Top Sites-journal |    0
+ .../Default/VideoDecodeStats/LOCK                  |    0
+ .../Default/VideoDecodeStats/LOG                   |    0
+ .../Default/VideoDecodeStats/LOG.old               |    0
+ .../session-dispatch-bot/Default/Web Data          |  Bin [31m157696[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/Web Data-journal  |    0
+ .../Default/WebStorage/QuotaManager                |  Bin [31m40960[m -> [32m0[m bytes
+ .../Default/WebStorage/QuotaManager-journal        |  Bin [31m8720[m -> [32m0[m bytes
+ .../Default/chrome_cart_db/LOCK                    |    0
+ .../Default/chrome_cart_db/LOG                     |    0
+ .../Default/chrome_cart_db/LOG.old                 |    0
+ .../Default/commerce_subscription_db/LOCK          |    0
+ .../Default/commerce_subscription_db/LOG           |    0
+ .../Default/commerce_subscription_db/LOG.old       |    0
+ .../Default/discount_infos_db/LOCK                 |    0
+ .../Default/discount_infos_db/LOG                  |    0
+ .../Default/discount_infos_db/LOG.old              |    0
+ .../session-dispatch-bot/Default/discounts_db/LOCK |    0
+ .../session-dispatch-bot/Default/discounts_db/LOG  |    0
+ .../Default/discounts_db/LOG.old                   |    0
+ .../Default/heavy_ad_intervention_opt_out.db       |  Bin [31m16384[m -> [32m0[m bytes
+ .../heavy_ad_intervention_opt_out.db-journal       |    0
+ .../Default/parcel_tracking_db/LOCK                |    0
+ .../Default/parcel_tracking_db/LOG                 |    0
+ .../Default/parcel_tracking_db/LOG.old             |    0
+ .../Default/passkey_enclave_state                  |    1 [31m-[m
+ .../Default/shared_proto_db/000003.log             |  Bin [31m52677[m -> [32m0[m bytes
+ .../Default/shared_proto_db/CURRENT                |    1 [31m-[m
+ .../Default/shared_proto_db/LOCK                   |    0
+ .../Default/shared_proto_db/LOG                    |    3 [31m-[m
+ .../Default/shared_proto_db/LOG.old                |    3 [31m-[m
+ .../Default/shared_proto_db/MANIFEST-000001        |  Bin [31m41[m -> [32m0[m bytes
+ .../Default/shared_proto_db/metadata/000003.log    |  Bin [31m1288[m -> [32m0[m bytes
+ .../Default/shared_proto_db/metadata/CURRENT       |    1 [31m-[m
+ .../Default/shared_proto_db/metadata/LOCK          |    0
+ .../Default/shared_proto_db/metadata/LOG           |    3 [31m-[m
+ .../Default/shared_proto_db/metadata/LOG.old       |    3 [31m-[m
+ .../shared_proto_db/metadata/MANIFEST-000001       |  Bin [31m41[m -> [32m0[m bytes
+ .../session-dispatch-bot/Default/trusted_vault.pb  |    2 [31m-[m
+ .../session-dispatch-bot/DevToolsActivePort        |    2 [31m-[m
+ .../REPOBW54DUBMQAUJ7V7KMSAVS3ID7YDF/cache.db      |  Bin [31m4096[m -> [32m0[m bytes
+ .../REPOBW54DUBMQAUJ7V7KMSAVS3ID7YDF/cache.db-wal  |  Bin [31m3122992[m -> [32m0[m bytes
+ .../REPOBW54DUBMQAUJ7V7KMSAVS3ID7YDF/cache.journal |    0
+ .../2WHCBIAU7ZWIVZSO6MPEH46W7FCQ2IPM/cache.db      |  Bin [31m4096[m -> [32m0[m bytes
+ .../2WHCBIAU7ZWIVZSO6MPEH46W7FCQ2IPM/cache.db-wal  |  Bin [31m12392[m -> [32m0[m bytes
+ .../2WHCBIAU7ZWIVZSO6MPEH46W7FCQ2IPM/cache.journal |    0
+ .../.wwebjs_auth/session-dispatch-bot/Last Browser |  Bin [31m180[m -> [32m0[m bytes
+ .../.wwebjs_auth/session-dispatch-bot/Last Version |    1 [31m-[m
+ data/.wwebjs_auth/session-dispatch-bot/Local State |    1 [31m-[m
+ .../Indexed Rules/37/9.65.0/Ruleset Data           |  Bin [31m243232[m -> [32m0[m bytes
+ .../Unindexed Rules/9.65.0/Filtering Rules         | 6013 [31m--------------------[m
+ .../Unindexed Rules/9.65.0/LICENSE.txt             |  383 [31m--[m
+ .../9.65.0/_metadata/verified_contents.json        |    1 [31m-[m
+ .../Unindexed Rules/9.65.0/manifest.json           |    6 [31m-[m
+ data/.wwebjs_auth/session-dispatch-bot/Variations  |    1 [31m-[m
+ ...3922fa618833704d1a2cf1a06cd4ec1e257d4494afb2b95 |  Bin [31m181143[m -> [32m0[m bytes
+ ...af473538d327456e25b2c2f70f2e4aad4bdcfdb013775c7 |  Bin [31m883638[m -> [32m0[m bytes
+ .../component_crx_cache/metadata.json              |    1 [31m-[m
+ .../extensions_crx_cache/metadata.json             |    1 [31m-[m
+ .../session-dispatch-bot/first_party_sets.db       |  Bin [31m49152[m -> [32m0[m bytes
+ .../first_party_sets.db-journal                    |    0
+ .../segmentation_platform/ukm_db                   |  Bin [31m49152[m -> [32m0[m bytes
+ .../segmentation_platform/ukm_db-wal               |    0
+ data/dedupe-store.json                             |    2 [32m+[m[31m-[m
+ src/app.js                                         |  199 [32m+[m[31m-[m
+ src/config/env.js                                  |   36 [32m+[m[31m-[m
+ src/dryRun.js                                      |  239 [32m+[m[31m-[m
+ src/extraction/localExtractor.js                   |  286 [32m+[m[31m-[m
+ src/extraction/openaiNormalizer.js                 |  299 [32m+[m[31m-[m
+ src/extraction/schemas.js                          |  464 [32m+[m[31m-[m
+ src/extraction/tesseractOcr.js                     |  181 [32m+[m
+ src/routing/fare.js                                |   40 [32m+[m[31m-[m
+ src/sheets/appendRow.js                            |  158 [32m+[m[31m-[m
+ src/whatsapp/client.js                             |   52 [32m+[m[31m-[m
+ src/whatsapp/messageHandler.js                     |  678 [32m++[m[31m-[m
+ test/fixtures/labeled/sample-message.txt           |   22 [32m+[m
+ test/fixtures/short-card/basic-net.txt             |    4 [32m+[m
+ test/integration/pipeline-dryrun.test.js           |    7 [32m+[m[31m-[m
+ test/unit/enrich-pipeline.test.js                  |  298 [32m+[m
+ test/unit/local-normalization.test.js              |  384 [32m+[m[31m-[m
+ test/unit/ocr-message-handler.test.js              |  110 [32m+[m
+ test/unit/sheets.test.js                           |   75 [32m+[m[31m-[m
+ 285 files changed, 3122 insertions(+), 7134 deletions(-)
