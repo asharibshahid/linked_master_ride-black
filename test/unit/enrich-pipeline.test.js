@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createMessageHandler } = require("../../src/whatsapp/messageHandler");
+const { createUpcomingJobAppender } = require("../../src/sheets/upcomingJobs");
 const { DedupeStore } = require("../../src/utils/dedupe");
 const { createSilentLogger } = require("../helpers");
 
@@ -32,6 +33,7 @@ function createRecordingLogger() {
 
 function createAllowedGroupMessage(body, overrides = {}) {
   const groupId = overrides.groupId || "120363408968321565@g.us";
+  const groupName = overrides.groupName || "Test Allowed Group";
   return {
     body,
     fromMe: false,
@@ -46,7 +48,7 @@ function createAllowedGroupMessage(body, overrides = {}) {
     getChat: async () => ({
       isGroup: true,
       id: { _serialized: groupId },
-      name: "Test Allowed Group"
+      name: groupName
     })
   };
 }
@@ -197,6 +199,215 @@ test("enrich pipeline preserves extracted fare and logs the final row object bef
   assert.equal(finalRowLog.meta.rowObject["Required Vehicle"], "Saloon Car");
 });
 
+test("pipeline appends eligible future high-value rides to Upcoming Jobs >79 after Rides", async () => {
+  const { logger } = createRecordingLogger();
+  const appendRideCalls = [];
+  const appendUpcomingCalls = [];
+  const allowedGroup = "120363408968321565@g.us";
+  const upcomingHeaders = [
+    "Refer",
+    "Group Name",
+    "Source Name",
+    "Source Time",
+    "Pickup Day & Date",
+    "Starting Timing",
+    "Pickup",
+    "Drop Off",
+    "Distance",
+    "Fare",
+    "Required Vehicle",
+    "Payment Status"
+  ];
+
+  const appendUpcomingJobIfEligible = createUpcomingJobAppender({
+    sheetsClient: {
+      spreadsheets: {
+        values: {
+          get: async ({ range }) => {
+            if (String(range).includes("!1:1")) {
+              return { data: { values: [upcomingHeaders] } };
+            }
+            return { data: { values: [upcomingHeaders] } };
+          }
+        }
+      }
+    },
+    spreadsheetId: "sheet-id",
+    worksheetName: "Upcoming Jobs >79",
+    appendRow: async (ride) => {
+      appendUpcomingCalls.push(ride);
+      return { updatedRange: "Upcoming Jobs >79!A2", updatedRows: 1 };
+    },
+    logger,
+    timeZone: "Europe/London",
+    now: new Date("2026-03-01T00:00:00.000Z")
+  });
+
+  const handler = createMessageHandler({
+    env: {
+      allowedGroups: [allowedGroup],
+      appTimeZone: "Europe/London",
+      fareBase: 250,
+      farePerKm: 95,
+      defaultCurrency: "GBP"
+    },
+    logger,
+    dedupe: new DedupeStore({ logger: createSilentLogger() }),
+    localExtractor: {
+      extractWithAnalysis: () => ({
+        record: {
+          pickup_day_date: "Friday 13th March 2026",
+          starting_timing: "6:25 am",
+          pickup: "Heathrow Airport, Terminal 5",
+          drop_off: "10 Oakland Villas, Hay-on-Wye, Hereford, HR3 5PH",
+          required_vehicle: "Saloon Car",
+          fare: "145"
+        },
+        analysis: {
+          hadDateLikeText: true,
+          hadTimeLikeText: true,
+          selected: {
+            pickup: { value: "Heathrow Airport, Terminal 5", contaminated: false },
+            drop_off: {
+              value: "10 Oakland Villas, Hay-on-Wye, Hereford, HR3 5PH",
+              contaminated: false
+            },
+            required_vehicle: { value: "Saloon Car", source: "vehicle_line" }
+          }
+        }
+      })
+    },
+    openaiNormalizer: {
+      normalizeWithOpenAI: async ({ extracted }) => extracted
+    },
+    geocoder: {
+      geocodeAddress: async () => ({ lat: 51.47, lng: -0.45 })
+    },
+    osrmClient: {
+      getRouteFromOSRM: async () => ({
+        distance_meters: 241723,
+        duration_seconds: 1200,
+        distance_text: "150",
+        duration_text: "20m"
+      })
+    },
+    appendRideRow: async (ride) => {
+      appendRideCalls.push(ride);
+      return { updatedRange: "Rides!A2", updatedRows: 1 };
+    },
+    appendUpcomingJobIfEligible
+  });
+
+  await handler(createAllowedGroupMessage("future-high-value", { messageId: "UPCOMING-HIGH" }));
+
+  assert.equal(appendRideCalls.length, 1);
+  assert.equal(appendUpcomingCalls.length, 1);
+  assert.equal(appendUpcomingCalls[0].fare, "145");
+});
+
+test("pipeline skips Upcoming Jobs >79 for low-fare rides but still appends to Rides", async () => {
+  const { logger, entries } = createRecordingLogger();
+  const appendRideCalls = [];
+  const appendUpcomingCalls = [];
+  const allowedGroup = "120363408968321565@g.us";
+  const upcomingHeaders = [
+    "Refer",
+    "Group Name",
+    "Source Name",
+    "Source Time",
+    "Pickup Day & Date",
+    "Starting Timing",
+    "Pickup",
+    "Drop Off",
+    "Distance",
+    "Fare",
+    "Required Vehicle",
+    "Payment Status"
+  ];
+
+  const appendUpcomingJobIfEligible = createUpcomingJobAppender({
+    sheetsClient: {
+      spreadsheets: {
+        values: {
+          get: async ({ range }) => {
+            if (String(range).includes("!1:1")) {
+              return { data: { values: [upcomingHeaders] } };
+            }
+            return { data: { values: [upcomingHeaders] } };
+          }
+        }
+      }
+    },
+    spreadsheetId: "sheet-id",
+    worksheetName: "Upcoming Jobs >79",
+    appendRow: async (ride) => {
+      appendUpcomingCalls.push(ride);
+      return { updatedRange: "Upcoming Jobs >79!A2", updatedRows: 1 };
+    },
+    logger,
+    timeZone: "Europe/London",
+    now: new Date("2026-03-01T00:00:00.000Z")
+  });
+
+  const handler = createMessageHandler({
+    env: {
+      allowedGroups: [allowedGroup],
+      appTimeZone: "Europe/London",
+      fareBase: 250,
+      farePerKm: 95,
+      defaultCurrency: "GBP"
+    },
+    logger,
+    dedupe: new DedupeStore({ logger: createSilentLogger() }),
+    localExtractor: {
+      extractWithAnalysis: () => ({
+        record: {
+          pickup_day_date: "Friday 13th March 2026",
+          starting_timing: "6:25 am",
+          pickup: "Heathrow Airport, Terminal 5",
+          drop_off: "SW1A 1AA",
+          required_vehicle: "Saloon Car",
+          fare: "75"
+        },
+        analysis: {
+          hadDateLikeText: true,
+          hadTimeLikeText: true,
+          selected: {
+            pickup: { value: "Heathrow Airport, Terminal 5", contaminated: false },
+            drop_off: { value: "SW1A 1AA", contaminated: false },
+            required_vehicle: { value: "Saloon Car", source: "vehicle_line" }
+          }
+        }
+      })
+    },
+    openaiNormalizer: {
+      normalizeWithOpenAI: async ({ extracted }) => extracted
+    },
+    geocoder: {
+      geocodeAddress: async () => ({ lat: 51.47, lng: -0.45 })
+    },
+    osrmClient: {
+      getRouteFromOSRM: async () => ({
+        distance_meters: 24140,
+        duration_seconds: 1200,
+        distance_text: "15",
+        duration_text: "20m"
+      })
+    },
+    appendRideRow: async (ride) => {
+      appendRideCalls.push(ride);
+      return { updatedRange: "Rides!A2", updatedRows: 1 };
+    },
+    appendUpcomingJobIfEligible
+  });
+
+  await handler(createAllowedGroupMessage("future-low-fare", { messageId: "UPCOMING-LOW" }));
+
+  assert.equal(appendRideCalls.length, 1);
+  assert.equal(appendUpcomingCalls.length, 0);
+  assert.ok(entries.some((entry) => entry.message === "Upcoming job skipped because fare <= 79"));
+});
+
 test("enrich pipeline leaves distance and fare blank when coordinates are incomplete", async () => {
   const { logger, entries } = createRecordingLogger();
   const appendRideCalls = [];
@@ -261,6 +472,7 @@ test("pipeline routes rows with missing critical fields to Needs Review", async 
   const { logger } = createRecordingLogger();
   const appendRideCalls = [];
   const appendReviewCalls = [];
+  const appendUpcomingCalls = [];
   const allowedGroup = "120363408968321565@g.us";
   const expectedSourceTime = expectedSourceTimeFromTimestamp(1760000000);
 
@@ -308,6 +520,9 @@ test("pipeline routes rows with missing critical fields to Needs Review", async 
     appendReviewRow: async (ride) => {
       appendReviewCalls.push(ride);
       return { updatedRange: "Needs Review!A2", updatedRows: 1 };
+    },
+    appendUpcomingJobIfEligible: async (ride) => {
+      appendUpcomingCalls.push(ride);
     }
   });
 
@@ -315,6 +530,7 @@ test("pipeline routes rows with missing critical fields to Needs Review", async 
 
   assert.equal(appendRideCalls.length, 0);
   assert.equal(appendReviewCalls.length, 1);
+  assert.equal(appendUpcomingCalls.length, 0);
   assert.equal(appendReviewCalls[0].pickup, "PICKUP ONLY");
   assert.equal(appendReviewCalls[0].drop_off, "");
   assert.equal(appendReviewCalls[0].distance, "");
@@ -326,6 +542,7 @@ test("pipeline routes both-geocode-failed rows to Needs Review", async () => {
   const { logger } = createRecordingLogger();
   const appendRideCalls = [];
   const appendReviewCalls = [];
+  const appendUpcomingCalls = [];
   const allowedGroup = "120363408968321565@g.us";
 
   const handler = createMessageHandler({
@@ -372,6 +589,9 @@ test("pipeline routes both-geocode-failed rows to Needs Review", async () => {
     appendReviewRow: async (ride) => {
       appendReviewCalls.push(ride);
       return { updatedRange: "Needs Review!A2", updatedRows: 1 };
+    },
+    appendUpcomingJobIfEligible: async (ride) => {
+      appendUpcomingCalls.push(ride);
     }
   });
 
@@ -379,7 +599,74 @@ test("pipeline routes both-geocode-failed rows to Needs Review", async () => {
 
   assert.equal(appendRideCalls.length, 0);
   assert.equal(appendReviewCalls.length, 1);
+  assert.equal(appendUpcomingCalls.length, 0);
   assert.equal(appendReviewCalls[0].distance, "");
+});
+
+test("pipeline allows configured group names from env without hardcoded IDs", async () => {
+  const { logger } = createRecordingLogger();
+  const appendRideCalls = [];
+
+  const handler = createMessageHandler({
+    env: {
+      allowedGroups: ["  test allowed group  "],
+      allowedGroupNames: ["Dispatch Overflow"],
+      appTimeZone: "Europe/London",
+      fareBase: 250,
+      farePerKm: 95,
+      defaultCurrency: "GBP"
+    },
+    logger,
+    dedupe: new DedupeStore({ logger: createSilentLogger() }),
+    localExtractor: {
+      extractWithAnalysis: () => ({
+        record: {
+          pickup_day_date: "Friday 13th March 2026",
+          starting_timing: "6:25 am",
+          pickup: "Heathrow Airport",
+          drop_off: "SW1A 1AA",
+          required_vehicle: "Saloon",
+          fare: "90"
+        },
+        analysis: {
+          hadDateLikeText: true,
+          hadTimeLikeText: true,
+          selected: {
+            pickup: { value: "Heathrow Airport", contaminated: false },
+            drop_off: { value: "SW1A 1AA", contaminated: false },
+            required_vehicle: { value: "Saloon", source: "vehicle_line" }
+          }
+        }
+      })
+    },
+    openaiNormalizer: {
+      normalizeWithOpenAI: async ({ extracted }) => extracted
+    },
+    geocoder: {
+      geocodeAddress: async () => ({ lat: 51.47, lng: -0.45 })
+    },
+    osrmClient: {
+      getRouteFromOSRM: async () => ({
+        distance_meters: 24140,
+        duration_seconds: 1200,
+        distance_text: "15",
+        duration_text: "20m"
+      })
+    },
+    appendRideRow: async (ride) => {
+      appendRideCalls.push(ride);
+      return { updatedRange: "Rides!A2", updatedRows: 1 };
+    }
+  });
+
+  await handler(
+    createAllowedGroupMessage("group-name-match", {
+      groupId: "120363999999999999@g.us",
+      groupName: "Test   Allowed    Group"
+    })
+  );
+
+  assert.equal(appendRideCalls.length, 1);
 });
 
 test("pipeline appends OCR-only image attempts into the strict row schema", async () => {

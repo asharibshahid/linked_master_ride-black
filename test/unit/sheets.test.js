@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { validateSheetsConfig } = require("../../src/sheets/sheetsClient");
+const { verifyWorksheetTargetsReady } = require("../../src/app");
 const {
   classifyAppendFailure,
   buildAppendRange,
@@ -276,6 +277,101 @@ test("fetchSheetHeaders returns sanitized live headers", async () => {
     "Required Vehicle",
     "Payment Status"
   ]);
+});
+
+test("verifyWorksheetTargetsReady accepts rides, review, and upcoming sheets with exact strict headers", async () => {
+  const sheetsClient = {
+    spreadsheets: {
+      get: async () => ({
+        data: {
+          sheets: [
+            { properties: { title: "Rides" } },
+            { properties: { title: "Needs Review" } },
+            { properties: { title: "Upcoming Jobs >79" } }
+          ]
+        }
+      }),
+      values: {
+        get: async () => ({
+          data: {
+            values: [[
+              "Refer",
+              "Group Name",
+              "Source Name",
+              "Source Time",
+              "Pickup Day & Date",
+              "Starting Timing",
+              "Pickup",
+              "Drop Off",
+              "Distance",
+              "Fare",
+              "Required Vehicle",
+              "Payment Status"
+            ]]
+          }
+        })
+      }
+    }
+  };
+
+  await verifyWorksheetTargetsReady({
+    sheetsClient,
+    spreadsheetId: "sheet-id",
+    worksheetTargets: [
+      {
+        worksheetName: "Rides",
+        expectedHeaders: [
+          "Refer",
+          "Group Name",
+          "Source Name",
+          "Source Time",
+          "Pickup Day & Date",
+          "Starting Timing",
+          "Pickup",
+          "Drop Off",
+          "Distance",
+          "Fare",
+          "Required Vehicle",
+          "Payment Status"
+        ]
+      },
+      {
+        worksheetName: "Needs Review",
+        expectedHeaders: [
+          "Refer",
+          "Group Name",
+          "Source Name",
+          "Source Time",
+          "Pickup Day & Date",
+          "Starting Timing",
+          "Pickup",
+          "Drop Off",
+          "Distance",
+          "Fare",
+          "Required Vehicle",
+          "Payment Status"
+        ]
+      },
+      {
+        worksheetName: "Upcoming Jobs >79",
+        expectedHeaders: [
+          "Refer",
+          "Group Name",
+          "Source Name",
+          "Source Time",
+          "Pickup Day & Date",
+          "Starting Timing",
+          "Pickup",
+          "Drop Off",
+          "Distance",
+          "Fare",
+          "Required Vehicle",
+          "Payment Status"
+        ]
+      }
+    ],
+    logger: { info: () => {} }
+  });
 });
 
 test("classifyAppendFailure distinguishes common Google Sheets failures", () => {

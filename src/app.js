@@ -12,6 +12,7 @@ const { createGeocoder } = require("./routing/geocode");
 const { createOsrmClient } = require("./routing/osrm");
 const { createSheetsClient, validateSheetsConfig } = require("./sheets/sheetsClient");
 const { createAppendRow } = require("./sheets/appendRow");
+const { createUpcomingJobAppender } = require("./sheets/upcomingJobs");
 const { createMessageHandler } = require("./whatsapp/messageHandler");
 const { initializeWhatsAppClient } = require("./whatsapp/client");
 const { validateAndPrepareSessionStorage } = require("./whatsapp/session");
@@ -556,6 +557,10 @@ async function bootstrap() {
     {
       worksheetName: env.googleNeedsReviewWorksheetName,
       range: env.googleNeedsReviewRange
+    },
+    {
+      worksheetName: env.googleUpcomingJobsWorksheetName,
+      range: env.googleUpcomingJobsRange
     }
   ];
 
@@ -589,7 +594,7 @@ async function bootstrap() {
   logger.info("Google Sheets startup validation passed", {
     stage: "sheets_startup",
     fallbackUsed: false,
-    reason: `worksheets=${env.googleRidesWorksheetName},${env.googleNeedsReviewWorksheetName}`
+    reason: `worksheets=${env.googleRidesWorksheetName},${env.googleNeedsReviewWorksheetName},${env.googleUpcomingJobsWorksheetName}`
   });
 
   const dedupe = new DedupeStore({
@@ -650,6 +655,10 @@ async function bootstrap() {
       {
         worksheetName: env.googleNeedsReviewWorksheetName,
         expectedHeaders: STRICT_SHEET_HEADERS
+      },
+      {
+        worksheetName: env.googleUpcomingJobsWorksheetName,
+        expectedHeaders: STRICT_SHEET_HEADERS
       }
     ],
     logger: logger.child({ component: "sheets-startup" })
@@ -671,6 +680,24 @@ async function bootstrap() {
     logger: logger.child({ component: "sheets-append-review" })
   });
 
+  const appendUpcomingRow = createAppendRow({
+    sheetsClient,
+    spreadsheetId: env.googleSheetsId,
+    worksheetName: env.googleUpcomingJobsWorksheetName,
+    range: env.googleUpcomingJobsRange,
+    logger: logger.child({ component: "sheets-append-upcoming" })
+  });
+
+  const appendUpcomingJobIfEligible = createUpcomingJobAppender({
+    sheetsClient,
+    spreadsheetId: env.googleSheetsId,
+    worksheetName: env.googleUpcomingJobsWorksheetName,
+    range: env.googleUpcomingJobsRange,
+    appendRow: appendUpcomingRow,
+    logger: logger.child({ component: "upcoming-jobs" }),
+    timeZone: env.appTimeZone
+  });
+
   const onMessage = createMessageHandler({
     env,
     logger: logger.child({ component: "message-handler" }),
@@ -681,7 +708,8 @@ async function bootstrap() {
     geocoder,
     osrmClient,
     appendRideRow,
-    appendReviewRow
+    appendReviewRow,
+    appendUpcomingJobIfEligible
   });
 
   const bootSummary = {
@@ -690,6 +718,7 @@ async function bootstrap() {
     sessionDir: sessionState.sessionPath,
     worksheetName: env.googleRidesWorksheetName,
     needsReviewWorksheetName: env.googleNeedsReviewWorksheetName,
+    upcomingJobsWorksheetName: env.googleUpcomingJobsWorksheetName,
     geocodingProvider: env.geocodingProvider || "",
     sheetsConfigured: Boolean(sheetsClient && env.googleSheetsId),
     googleCredentialsSource: env.googleCredentialsSource,
@@ -701,7 +730,7 @@ async function bootstrap() {
 
   logger.info("Startup summary", {
     stage: "startup",
-    reason: `allowedGroups=${bootSummary.allowedGroups.length}, clientId=${bootSummary.whatsappClientId}, sessionDir=${bootSummary.sessionDir}, geocoder=${bootSummary.geocodingProvider}, sheetsConfigured=${bootSummary.sheetsConfigured}, sheetsCredentials=${bootSummary.googleCredentialsSource || "unknown"}, openaiConfigured=${bootSummary.openaiConfigured}, ridesSheet=${bootSummary.worksheetName}, reviewSheet=${bootSummary.needsReviewWorksheetName}`
+    reason: `allowedGroups=${bootSummary.allowedGroups.length}, clientId=${bootSummary.whatsappClientId}, sessionDir=${bootSummary.sessionDir}, geocoder=${bootSummary.geocodingProvider}, sheetsConfigured=${bootSummary.sheetsConfigured}, sheetsCredentials=${bootSummary.googleCredentialsSource || "unknown"}, openaiConfigured=${bootSummary.openaiConfigured}, ridesSheet=${bootSummary.worksheetName}, reviewSheet=${bootSummary.needsReviewWorksheetName}, upcomingSheet=${bootSummary.upcomingJobsWorksheetName}`
   });
   logger.debug("Startup details", {
     stage: "startup",
@@ -807,5 +836,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  bootstrap
+  bootstrap,
+  verifyWorksheetTargetsReady
 };

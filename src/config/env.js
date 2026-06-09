@@ -32,6 +32,20 @@ function parseArray(value) {
     .filter(Boolean);
 }
 
+function dedupeStringArray(values) {
+  const seen = new Set();
+  const output = [];
+
+  for (const value of Array.isArray(values) ? values : []) {
+    const normalized = safeString(value);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    output.push(normalized);
+  }
+
+  return output;
+}
+
 function parseNumber(value, fallback, options = {}) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -173,6 +187,14 @@ const resolvedGoogleWorksheetName = safeString(
   process.env.GOOGLE_SHEETS_WORKSHEET_NAME || process.env.GOOGLE_WORKSHEET_NAME,
   extractWorksheetNameFromRange(resolvedGoogleSheetsRange) || "Sheet1"
 );
+const parsedAllowedGroups = parseArray(process.env.ALLOWED_GROUPS);
+const parsedAllowedGroupIds = parseArray(process.env.ALLOWED_GROUP_IDS);
+const parsedAllowedGroupNames = parseArray(process.env.ALLOWED_GROUP_NAMES);
+const mergedAllowedGroups = dedupeStringArray([
+  ...parsedAllowedGroups,
+  ...parsedAllowedGroupIds,
+  ...parsedAllowedGroupNames
+]);
 const googleCredentialsState = resolveGoogleCredentialsState();
 const defaultDedupeStorePath = isProductionNodeEnv()
   ? path.resolve(RAILWAY_DATA_ROOT, "dedupe-store.json")
@@ -197,6 +219,10 @@ const env = Object.freeze({
     process.env.GOOGLE_SHEETS_NEEDS_REVIEW_WORKSHEET_NAME,
     "Needs Review"
   ),
+  googleUpcomingJobsWorksheetName: safeString(
+    process.env.GOOGLE_SHEETS_UPCOMING_JOBS_WORKSHEET_NAME,
+    "Upcoming Jobs >79"
+  ),
   googleRidesRange: resolveWorksheetRange(
     process.env.GOOGLE_SHEETS_RIDES_RANGE,
     process.env.GOOGLE_SHEETS_RIDES_WORKSHEET_NAME,
@@ -206,6 +232,11 @@ const env = Object.freeze({
     process.env.GOOGLE_SHEETS_NEEDS_REVIEW_RANGE,
     process.env.GOOGLE_SHEETS_NEEDS_REVIEW_WORKSHEET_NAME,
     "Needs Review"
+  ),
+  googleUpcomingJobsRange: resolveWorksheetRange(
+    process.env.GOOGLE_SHEETS_UPCOMING_JOBS_RANGE,
+    process.env.GOOGLE_SHEETS_UPCOMING_JOBS_WORKSHEET_NAME,
+    "Upcoming Jobs >79"
   ),
   googleCredentialsPath: resolveGoogleCredentialsPath(),
   googleCredentialsJson: googleCredentialsState.json,
@@ -231,7 +262,9 @@ const env = Object.freeze({
     min: 1000,
     max: 500000
   }),
-  allowedGroups: parseArray(process.env.ALLOWED_GROUPS || process.env.ALLOWED_GROUP_IDS),
+  allowedGroups: mergedAllowedGroups,
+  allowedGroupIds: dedupeStringArray(parsedAllowedGroupIds),
+  allowedGroupNames: dedupeStringArray(parsedAllowedGroupNames),
   allowFromMeMessages: parseBoolean(
     process.env.ALLOW_FROM_ME_MESSAGES || process.env.WHATSAPP_ALLOW_FROM_ME_TEST_MESSAGES,
     false

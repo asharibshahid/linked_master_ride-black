@@ -193,6 +193,51 @@ function normalizeAllowedGroupIds(groupIds) {
     .filter(Boolean);
 }
 
+function normalizeAllowedGroupName(value) {
+  return safeTrim(String(value || "").replace(/\s+/g, " ")).toLowerCase();
+}
+
+function isLikelyGroupId(value) {
+  return /@g\.us$/i.test(safeTrim(value));
+}
+
+function createAllowedGroupMatcher(config = {}) {
+  const idSet = new Set();
+  const nameSet = new Set();
+
+  for (const value of normalizeAllowedGroupIds(config.allowedGroups)) {
+    if (isLikelyGroupId(value)) {
+      idSet.add(value);
+    } else {
+      nameSet.add(normalizeAllowedGroupName(value));
+    }
+  }
+
+  for (const value of normalizeAllowedGroupIds(config.allowedGroupIds)) {
+    idSet.add(value);
+  }
+
+  for (const value of normalizeAllowedGroupIds(config.allowedGroupNames)) {
+    nameSet.add(normalizeAllowedGroupName(value));
+  }
+
+  nameSet.delete("");
+
+  return {
+    isEmpty() {
+      return idSet.size === 0 && nameSet.size === 0;
+    },
+    matches({ groupId, groupName }) {
+      const normalizedId = safeTrim(groupId);
+      const normalizedName = normalizeAllowedGroupName(groupName);
+      return idSet.has(normalizedId) || nameSet.has(normalizedName);
+    },
+    size() {
+      return idSet.size + nameSet.size;
+    }
+  };
+}
+
 async function safeLocalExtraction(localExtractor, rawMessage, context, logger) {
   try {
     if (localExtractor && typeof localExtractor.extractWithAnalysis === "function") {
@@ -583,6 +628,7 @@ async function processRideAttempt({
   osrmClient,
   appendRow,
   appendReviewRow,
+  appendUpcomingJobIfEligible,
   groupName,
   sourceName,
   receivedAt,
@@ -688,6 +734,27 @@ async function processRideAttempt({
   });
 
   await targetAppender(ride);
+
+  if (routingDecision.target === "rides" && typeof appendUpcomingJobIfEligible === "function") {
+    try {
+      await appendUpcomingJobIfEligible(ride);
+    } catch (error) {
+      const summary = summarizeKnownError(error, {
+        stage: "upcoming_jobs",
+        defaultSummary: "Failed to evaluate or append upcoming high-value job",
+        fallbackUsed: true
+      });
+
+      logger.warn(summary.summary, {
+        stage: "upcoming_jobs",
+        refer: ride.refer,
+        fallbackUsed: true,
+        reason: summary.likelyCause || "Upcoming Jobs >79 append failed after Rides success",
+        error
+      });
+    }
+  }
+
   dedupe.markProcessed(attemptDedupeKey, {
     messageId: attempt.attemptMessageId,
     chatId,
@@ -725,10 +792,14 @@ function createMessageHandler({
   osrmClient,
   appendRideRow,
   appendReviewRow,
+  appendUpcomingJobIfEligible,
   appendRow
 }) {
-  const allowedGroupIds = normalizeAllowedGroupIds(env?.allowedGroups);
-  const allowedGroups = new Set(allowedGroupIds);
+  const allowedGroupMatcher = createAllowedGroupMatcher({
+    allowedGroups: env?.allowedGroups,
+    allowedGroupIds: env?.allowedGroupIds,
+    allowedGroupNames: env?.allowedGroupNames
+  });
   const allowFromMeMessages = Boolean(env?.allowFromMeMessages);
   let warnedAboutEmptyAllowList = false;
 
@@ -758,7 +829,7 @@ function createMessageHandler({
         return;
       }
 
-      if (allowedGroups.size === 0) {
+      if (allowedGroupMatcher.isEmpty()) {
         if (!warnedAboutEmptyAllowList) {
           warnedAboutEmptyAllowList = true;
           logger.warn("No allowed groups configured; skipping messages", {
@@ -770,7 +841,10 @@ function createMessageHandler({
       }
 
       const groupFilterId = serializedChatId || chatId;
-      const isAllowedGroup = allowedGroups.has(groupFilterId);
+      const isAllowedGroup = allowedGroupMatcher.matches({
+        groupId: groupFilterId,
+        groupName
+      });
 
       if (!isAllowedGroup) {
         return;
@@ -805,6 +879,7 @@ function createMessageHandler({
             osrmClient,
             appendRow: primaryAppender,
             appendReviewRow,
+            appendUpcomingJobIfEligible,
             groupName,
             sourceName,
             receivedAt,
