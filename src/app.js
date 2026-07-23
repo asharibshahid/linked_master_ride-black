@@ -11,8 +11,19 @@ const { normalizeHeaderName, STRICT_SHEET_HEADERS } = require("./extraction/sche
 const { createGeocoder } = require("./routing/geocode");
 const { createOsrmClient } = require("./routing/osrm");
 const { createSheetsClient, validateSheetsConfig } = require("./sheets/sheetsClient");
-const { createAppendRow } = require("./sheets/appendRow");
+const { createAppendRow, buildHeaderRange } = require("./sheets/appendRow");
 const { createUpcomingJobAppender } = require("./sheets/upcomingJobs");
+const {
+  FINAL_BID_HEADERS,
+  buildFinalBidSheetRow,
+  createFinalBidAppender
+} = require("./bids/finalBid");
+const { createCalendarClient } = require("./calendar/client");
+const { startFinalBidApprovalPolling } = require("./calendar/approvalWorkflow");
+const { DRIVER_HEADERS, VEHICLE_HEADERS, loadAvailableDrivers } = require("./drivers/management");
+const { startRecommendationPolling } = require("./polling");
+const { RECOMMENDATION_HEADERS, RECOMMENDATION_WORKSHEET_NAME } = require("./engine");
+const { OPERATIONS_VIEW_HEADERS, startOperationsViewPolling } = require("./operations/view");
 const { createMessageHandler } = require("./whatsapp/messageHandler");
 const { initializeWhatsAppClient } = require("./whatsapp/client");
 const { validateAndPrepareSessionStorage } = require("./whatsapp/session");
@@ -30,6 +41,10 @@ function safeString(value, fallback = "") {
   if (value === null || value === undefined) return fallback;
   const normalized = String(value).trim();
   return normalized.length > 0 ? normalized : fallback;
+}
+
+function normalizeWorksheetTitle(value) {
+  return safeString(value).toLowerCase();
 }
 
 function resolveQrImagePath() {
@@ -269,13 +284,15 @@ async function verifyWorksheetTargetsReady({
     (Array.isArray(response?.data?.sheets) ? response.data.sheets : [])
       .map((sheet) => safeString(sheet?.properties?.title))
       .filter(Boolean)
+      .map((title) => normalizeWorksheetTitle(title))
   );
 
   const targets = Array.isArray(worksheetTargets) ? worksheetTargets : [];
   const missing = targets
     .map((target) => safeString(target?.worksheetName))
     .filter(
-      (worksheetName) => safeString(worksheetName) && !existingTitles.has(safeString(worksheetName))
+      (worksheetName) =>
+        safeString(worksheetName) && !existingTitles.has(normalizeWorksheetTitle(worksheetName))
     );
 
   if (missing.length > 0) {
@@ -347,6 +364,271 @@ async function verifyWorksheetTargetsReady({
   });
 }
 
+async function ensureWorksheetWithHeaders({
+  sheetsClient,
+  spreadsheetId,
+  worksheetName,
+  headers,
+  repairHeaders = false,
+  logger
+}) {
+  if (!sheetsClient || !spreadsheetId || !worksheetName) {
+    throw new Error("Google Sheets client is not ready for worksheet setup");
+  }
+
+  const response = await sheetsClient.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets(properties(title))"
+  });
+  const existingTitles = new Set(
+    (Array.isArray(response?.data?.sheets) ? response.data.sheets : [])
+      .map((sheet) => safeString(sheet?.properties?.title))
+      .filter(Boolean)
+      .map((title) => normalizeWorksheetTitle(title))
+  );
+
+  if (!existingTitles.has(normalizeWorksheetTitle(worksheetName))) {
+    try {
+      await sheetsClient.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              addSheet: {
+                properties: {
+                  title: worksheetName
+                }
+              }
+            }
+          ]
+        }
+      });
+
+      logger.info("Google Sheets worksheet created", {
+        stage: "sheets_startup",
+        fallbackUsed: false,
+        reason: worksheetName
+      });
+    } catch (error) {
+      const message = safeString(error?.response?.data?.error?.message || error?.message);
+      if (!/already exists/i.test(message)) {
+        throw error;
+      }
+
+      logger.info("Google Sheets worksheet already exists", {
+        stage: "sheets_startup",
+        fallbackUsed: false,
+        reason: worksheetName
+      });
+    }
+  }
+
+  const headerResponse = await sheetsClient.spreadsheets.values.get({
+    spreadsheetId,
+    range: buildHeaderRange(worksheetName),
+    majorDimension: "ROWS"
+  });
+  const currentHeaders = Array.isArray(headerResponse?.data?.values?.[0])
+    ? headerResponse.data.values[0].map((header) => safeString(header))
+    : [];
+
+  const expectedHeaders = Array.isArray(headers) ? headers : [];
+  const headerMismatch =
+    currentHeaders.length > 0 &&
+    expectedHeaders.length > 0 &&
+    (currentHeaders.length !== expectedHeaders.length ||
+      currentHeaders.some(
+        (header, index) => normalizeHeaderName(header) !== normalizeHeaderName(expectedHeaders[index])
+      ));
+
+  if (
+    expectedHeaders.length > 0 &&
+    (currentHeaders.length === 0 || (repairHeaders && headerMismatch))
+  ) {
+    await sheetsClient.spreadsheets.values.update({
+      spreadsheetId,
+      range: buildHeaderRange(worksheetName),
+      valueInputOption: "RAW",
+      requestBody: {
+        values: [expectedHeaders]
+      }
+    });
+
+    logger.info(
+      currentHeaders.length === 0
+        ? "Google Sheets worksheet headers initialized"
+        : "Google Sheets worksheet headers repaired",
+      {
+      stage: "sheets_startup",
+      fallbackUsed: false,
+      reason: worksheetName
+      }
+    );
+  }
+}
+
+function normalizeSheetTitleForFormula(worksheetName) {
+  const cleanName = safeString(worksheetName);
+  if (!cleanName) return "";
+  if (/^[A-Za-z0-9_]+$/.test(cleanName)) return cleanName;
+  return `'${cleanName.replace(/'/g, "''")}'`;
+}
+
+function findSheetPropertiesByTitle(sheetsMetadata, worksheetName) {
+  const title = normalizeWorksheetTitle(worksheetName);
+  return (Array.isArray(sheetsMetadata?.data?.sheets) ? sheetsMetadata.data.sheets : [])
+    .map((sheet) => sheet?.properties || {})
+    .find((properties) => normalizeWorksheetTitle(properties.title) === title);
+}
+
+async function applyFinalBidAssignedDriverValidation({
+  sheetsClient,
+  spreadsheetId,
+  finalBidWorksheetName,
+  driversWorksheetName,
+  logger
+}) {
+  if (!sheetsClient || !spreadsheetId) {
+    throw new Error("Google Sheets client is not ready for driver validation setup");
+  }
+
+  const metadata = await sheetsClient.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets(properties(sheetId,title))"
+  });
+  const finalBidProperties = findSheetPropertiesByTitle(metadata, finalBidWorksheetName);
+  const driversProperties = findSheetPropertiesByTitle(metadata, driversWorksheetName);
+
+  if (!finalBidProperties?.sheetId && finalBidProperties?.sheetId !== 0) {
+    throw new Error(`Worksheet ${finalBidWorksheetName} not found for driver validation`);
+  }
+
+  if (!driversProperties?.sheetId && driversProperties?.sheetId !== 0) {
+    throw new Error(`Worksheet ${driversWorksheetName} not found for driver validation`);
+  }
+
+  const headerResponse = await sheetsClient.spreadsheets.values.get({
+    spreadsheetId,
+    range: buildHeaderRange(finalBidWorksheetName),
+    majorDimension: "ROWS"
+  });
+  const headers = Array.isArray(headerResponse?.data?.values?.[0])
+    ? headerResponse.data.values[0].map((header) => safeString(header))
+    : [];
+  const assignedDriverColumnIndex = headers.findIndex(
+    (header) => normalizeHeaderName(header) === normalizeHeaderName("Assigned Driver")
+  );
+
+  if (assignedDriverColumnIndex < 0) {
+    throw new Error("Final Bid worksheet is missing Assigned Driver header");
+  }
+
+  await sheetsClient.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          setDataValidation: {
+            range: {
+              sheetId: finalBidProperties.sheetId,
+              startRowIndex: 1,
+              startColumnIndex: assignedDriverColumnIndex,
+              endColumnIndex: assignedDriverColumnIndex + 1
+            },
+            rule: {
+              condition: {
+                type: "ONE_OF_RANGE",
+                values: [
+                  {
+                    userEnteredValue: `=${normalizeSheetTitleForFormula(driversProperties.title)}!$A$2:$A`
+                  }
+                ]
+              },
+              strict: false,
+              showCustomUi: true
+            }
+          }
+        }
+      ]
+    }
+  });
+
+  logger.info("Final Bid Assigned Driver validation configured", {
+    stage: "sheets_startup",
+    fallbackUsed: false,
+    reason: `${finalBidProperties.title}!${headers[assignedDriverColumnIndex]} -> ${driversProperties.title}!A2:A`
+  });
+}
+
+async function applyTextFormatForHeaders({
+  sheetsClient,
+  spreadsheetId,
+  worksheetName,
+  headerNames,
+  logger
+}) {
+  if (!sheetsClient || !spreadsheetId || !worksheetName) {
+    throw new Error("Google Sheets client is not ready for text format setup");
+  }
+
+  const metadata = await sheetsClient.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets(properties(sheetId,title))"
+  });
+  const sheetProperties = findSheetPropertiesByTitle(metadata, worksheetName);
+  if (!sheetProperties?.sheetId && sheetProperties?.sheetId !== 0) {
+    throw new Error(`Worksheet ${worksheetName} not found for text format setup`);
+  }
+
+  const headerResponse = await sheetsClient.spreadsheets.values.get({
+    spreadsheetId,
+    range: buildHeaderRange(worksheetName),
+    majorDimension: "ROWS"
+  });
+  const headers = Array.isArray(headerResponse?.data?.values?.[0])
+    ? headerResponse.data.values[0].map((header) => safeString(header))
+    : [];
+  const requestedHeaders = new Set(
+    (Array.isArray(headerNames) ? headerNames : []).map((header) => normalizeHeaderName(header))
+  );
+  const requests = headers
+    .map((header, index) => ({ header, index }))
+    .filter(({ header }) => requestedHeaders.has(normalizeHeaderName(header)))
+    .map(({ index }) => ({
+      repeatCell: {
+        range: {
+          sheetId: sheetProperties.sheetId,
+          startRowIndex: 1,
+          startColumnIndex: index,
+          endColumnIndex: index + 1
+        },
+        cell: {
+          userEnteredFormat: {
+            numberFormat: {
+              type: "TEXT"
+            }
+          }
+        },
+        fields: "userEnteredFormat.numberFormat"
+      }
+    }));
+
+  if (requests.length === 0) return;
+
+  await sheetsClient.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests
+    }
+  });
+
+  logger.info("Google Sheets text formatting configured", {
+    stage: "sheets_startup",
+    fallbackUsed: false,
+    reason: `${sheetProperties.title}: ${requests.length} columns`
+  });
+}
+
 function registerProcessHandlers(logger) {
   process.on("uncaughtException", (error) => {
     const summary = summarizeKnownError(error, {
@@ -382,7 +664,15 @@ function registerProcessHandlers(logger) {
   });
 }
 
-function registerShutdownHooks({ logger, getClient, getDedupe, getServer, sessionPath }) {
+function registerShutdownHooks({
+  logger,
+  getClient,
+  getDedupe,
+  getServer,
+  getApprovalPoller,
+  getOperationsPoller,
+  sessionPath
+}) {
   let shuttingDown = false;
 
   async function shutdown(signal) {
@@ -459,6 +749,37 @@ function registerShutdownHooks({ logger, getClient, getDedupe, getServer, sessio
       });
     }
 
+    const approvalPoller = typeof getApprovalPoller === "function" ? getApprovalPoller() : null;
+    if (approvalPoller && typeof approvalPoller.stop === "function") {
+      try {
+        approvalPoller.stop();
+        logger.info("Approval poller stopped", {
+          stage: "shutdown"
+        });
+      } catch (error) {
+        logger.warn("Unable to stop approval poller", {
+          stage: "shutdown",
+          fallbackUsed: true
+        });
+      }
+    }
+
+    const operationsPoller =
+      typeof getOperationsPoller === "function" ? getOperationsPoller() : null;
+    if (operationsPoller && typeof operationsPoller.stop === "function") {
+      try {
+        operationsPoller.stop();
+        logger.info("Operations View poller stopped", {
+          stage: "shutdown"
+        });
+      } catch (error) {
+        logger.warn("Unable to stop Operations View poller", {
+          stage: "shutdown",
+          fallbackUsed: true
+        });
+      }
+    }
+
     logger.info("Service stopped", {
       stage: "shutdown",
       reason: sessionPath || ""
@@ -485,12 +806,18 @@ async function bootstrap() {
   let clientRef = null;
   let dedupeRef = null;
   let serverRef = null;
+  let approvalPollerRef = null;
+  let operationsPollerRef = null;
+  let recommendationPollerRef = null;
   const runtimeStatus = createBotRuntimeStatus();
   registerShutdownHooks({
     logger,
     getClient: () => clientRef,
     getDedupe: () => dedupeRef,
     getServer: () => serverRef,
+    getApprovalPoller: () => approvalPollerRef,
+    getOperationsPoller: () => operationsPollerRef,
+    getRecommendationPoller: () => recommendationPollerRef,
     sessionPath: env.whatsappSessionPath
   });
 
@@ -509,21 +836,6 @@ async function bootstrap() {
     runtimeStatus,
     port: env.port
   });
-
-  if (env.googleCredentialsJsonError) {
-    const startupError = new Error(
-      `Google credentials env parsing failed: ${env.googleCredentialsJsonError}`
-    );
-    startupError.code = "GOOGLE_CREDENTIALS_JSON_INVALID";
-    throw startupError;
-  }
-
-  if (env.googleCredentialsSource === "env_json" && env.googleCredentialsJson) {
-    logger.info("Google credentials loaded from env", {
-      stage: "sheets_startup",
-      reason: "GOOGLE_CREDENTIALS_JSON"
-    });
-  }
 
   if (!env.whatsappClientId) {
     throw new Error("WHATSAPP_CLIENT_ID is required for stable LocalAuth persistence");
@@ -549,6 +861,67 @@ async function bootstrap() {
     }
   );
 
+  let activeMessageHandler = null;
+  let resolvePipelineReady;
+  let rejectPipelineReady;
+  const pipelineReady = new Promise((resolve, reject) => {
+    resolvePipelineReady = resolve;
+    rejectPipelineReady = reject;
+  });
+  pipelineReady.catch(() => {});
+  const gatedOnMessage = async (message) => {
+    await pipelineReady;
+    if (typeof activeMessageHandler !== "function") {
+      throw new Error("Message pipeline is not ready");
+    }
+    return activeMessageHandler(message);
+  };
+  let client = null;
+
+  logger.info("Waiting for WhatsApp login before starting downstream workflows", {
+    stage: "whatsapp_auth",
+    reason: "sheets/pollers/message-processing are gated until WhatsApp ready"
+  });
+
+  try {
+    client = await initializeWhatsAppClient({
+      sessionPath: sessionState.sessionPath,
+      clientId: sessionState.clientId,
+      startupTimeoutMs: env.whatsappStartupTimeoutMs,
+      persistedSessionDetected: sessionState.sessionFolderHasData,
+      qrImagePath: runtimeStatus.getSnapshot().qrImagePath,
+      onStateChange: (state, details = {}) => {
+        runtimeStatus.update(state, details);
+      },
+      logger: logger.child({ component: "whatsapp-client" }),
+      puppeteer: resolvePuppeteerOptions(),
+      onMessage: gatedOnMessage
+    });
+    clientRef = client;
+  } catch (error) {
+    rejectPipelineReady(error);
+    throw error;
+  }
+
+  logger.info("WhatsApp login confirmed; starting downstream workflows", {
+    stage: "whatsapp_connect"
+  });
+
+  if (env.googleCredentialsJsonError) {
+    const startupError = new Error(
+      `Google credentials env parsing failed: ${env.googleCredentialsJsonError}`
+    );
+    startupError.code = "GOOGLE_CREDENTIALS_JSON_INVALID";
+    throw startupError;
+  }
+
+  if (env.googleCredentialsSource === "env_json" && env.googleCredentialsJson) {
+    logger.info("Google credentials loaded from env", {
+      stage: "sheets_startup",
+      reason: "GOOGLE_CREDENTIALS_JSON"
+    });
+  }
+
   const startupSheetTargets = [
     {
       worksheetName: env.googleRidesWorksheetName,
@@ -561,6 +934,22 @@ async function bootstrap() {
     {
       worksheetName: env.googleUpcomingJobsWorksheetName,
       range: env.googleUpcomingJobsRange
+    },
+    {
+      worksheetName: env.googleFinalBidWorksheetName,
+      range: env.googleFinalBidRange
+    },
+    {
+      worksheetName: env.googleDriversWorksheetName,
+      range: env.googleDriversRange
+    },
+    {
+      worksheetName: env.googleVehiclesWorksheetName,
+      range: env.googleVehiclesRange
+    },
+    {
+      worksheetName: env.googleOperationsViewWorksheetName,
+      range: env.googleOperationsViewRange
     }
   ];
 
@@ -644,6 +1033,75 @@ async function bootstrap() {
     logger: logger.child({ component: "sheets-client" })
   });
 
+  await ensureWorksheetWithHeaders({
+    sheetsClient,
+    spreadsheetId: env.googleSheetsId,
+    worksheetName: env.googleFinalBidWorksheetName,
+    headers: FINAL_BID_HEADERS,
+    repairHeaders: true,
+    logger: logger.child({ component: "sheets-startup" })
+  });
+
+  await ensureWorksheetWithHeaders({
+    sheetsClient,
+    spreadsheetId: env.googleSheetsId,
+    worksheetName: env.googleDriversWorksheetName,
+    headers: DRIVER_HEADERS,
+    repairHeaders: true,
+    logger: logger.child({ component: "sheets-startup" })
+  });
+
+  await ensureWorksheetWithHeaders({
+    sheetsClient,
+    spreadsheetId: env.googleSheetsId,
+    worksheetName: env.googleVehiclesWorksheetName,
+    headers: VEHICLE_HEADERS,
+    repairHeaders: true,
+    logger: logger.child({ component: "sheets-startup" })
+  });
+
+  await ensureWorksheetWithHeaders({
+    sheetsClient,
+    spreadsheetId: env.googleSheetsId,
+    worksheetName: env.googleOperationsViewWorksheetName,
+    headers: OPERATIONS_VIEW_HEADERS,
+    repairHeaders: true,
+    logger: logger.child({ component: "sheets-startup" })
+  });
+
+  await ensureWorksheetWithHeaders({
+    sheetsClient,
+    spreadsheetId: env.googleSheetsId,
+    worksheetName: RECOMMENDATION_WORKSHEET_NAME,
+    headers: RECOMMENDATION_HEADERS,
+    repairHeaders: true,
+    logger: logger.child({ component: "sheets-startup" })
+  });
+
+  await applyTextFormatForHeaders({
+    sheetsClient,
+    spreadsheetId: env.googleSheetsId,
+    worksheetName: env.googleDriversWorksheetName,
+    headerNames: ["Driver ID", "WhatsApp Number", "Vehicle ID"],
+    logger: logger.child({ component: "sheets-startup" })
+  });
+
+  await applyTextFormatForHeaders({
+    sheetsClient,
+    spreadsheetId: env.googleSheetsId,
+    worksheetName: env.googleVehiclesWorksheetName,
+    headerNames: ["Vehicle ID", "Registration Number", "Driver ID"],
+    logger: logger.child({ component: "sheets-startup" })
+  });
+
+  await applyFinalBidAssignedDriverValidation({
+    sheetsClient,
+    spreadsheetId: env.googleSheetsId,
+    finalBidWorksheetName: env.googleFinalBidWorksheetName,
+    driversWorksheetName: env.googleDriversWorksheetName,
+    logger: logger.child({ component: "sheets-startup" })
+  });
+
   await verifyWorksheetTargetsReady({
     sheetsClient,
     spreadsheetId: env.googleSheetsId,
@@ -659,9 +1117,114 @@ async function bootstrap() {
       {
         worksheetName: env.googleUpcomingJobsWorksheetName,
         expectedHeaders: STRICT_SHEET_HEADERS
+      },
+      {
+        worksheetName: env.googleFinalBidWorksheetName,
+        expectedHeaders: FINAL_BID_HEADERS
+      },
+      {
+        worksheetName: env.googleDriversWorksheetName,
+        expectedHeaders: DRIVER_HEADERS
+      },
+      {
+        worksheetName: env.googleVehiclesWorksheetName,
+        expectedHeaders: VEHICLE_HEADERS
+      },
+      {
+        worksheetName: env.googleOperationsViewWorksheetName,
+        expectedHeaders: OPERATIONS_VIEW_HEADERS
+      },
+      {
+        worksheetName: RECOMMENDATION_WORKSHEET_NAME,
+        expectedHeaders: RECOMMENDATION_HEADERS
       }
     ],
     logger: logger.child({ component: "sheets-startup" })
+  });
+
+  const availableDrivers = await loadAvailableDrivers({
+    sheetsClient,
+    spreadsheetId: env.googleSheetsId,
+    worksheetName: env.googleDriversWorksheetName,
+    logger: logger.child({ component: "drivers" })
+  });
+
+  logger.info("Available drivers loaded", {
+    stage: "driver_management",
+    fallbackUsed: false,
+    reason: `count=${availableDrivers.length}`
+  });
+
+  const calendarClient = env.calendarEnabled
+    ? createCalendarClient({
+        calendarId: env.googleCalendarId,
+        credentialsJson: env.googleCredentialsJson,
+        credentialsPath: env.googleCredentialsPath,
+        logger: logger.child({ component: "calendar-client" })
+      })
+    : null;
+
+  if (env.calendarEnabled && calendarClient) {
+    approvalPollerRef = startFinalBidApprovalPolling({
+      sheetsClient,
+      calendarClient,
+      spreadsheetId: env.googleSheetsId,
+      worksheetName: env.googleFinalBidWorksheetName,
+      calendarId: env.googleCalendarId,
+      timeZone: env.appTimeZone,
+      durationMinutes: env.calendarEventDurationMinutes,
+      intervalMs: env.calendarApprovalPollMs,
+      logger: logger.child({ component: "calendar-approval" })
+    });
+
+    logger.info("Final Bid approval polling started", {
+      stage: "calendar_approval",
+      fallbackUsed: false,
+      reason: `interval=${env.calendarApprovalPollMs}ms calendar=${env.googleCalendarId}`
+    });
+  } else if (env.calendarEnabled) {
+    logger.warn("Final Bid approval polling disabled because Calendar client is unavailable", {
+      stage: "calendar_approval",
+      fallbackUsed: true,
+      reason: env.googleCalendarId || "calendar_id_missing"
+    });
+  } else {
+    logger.warn("Final Bid approval polling disabled by config", {
+      stage: "calendar_approval",
+      fallbackUsed: true
+    });
+  }
+
+  recommendationPollerRef = startRecommendationPolling({
+    sheetsClient,
+    spreadsheetId: env.googleSheetsId,
+    finalBidWorksheetName: env.googleFinalBidWorksheetName,
+    recommendationsWorksheetName: RECOMMENDATION_WORKSHEET_NAME,
+    driversWorksheetName: env.googleDriversWorksheetName,
+    vehiclesWorksheetName: env.googleVehiclesWorksheetName,
+    intervalMs: env.recommendationPollMs || 60000,
+    logger: logger.child({ component: "recommendation-engine" }),
+  });
+
+  logger.info("Driver recommendation polling started", {
+    stage: "recommendations",
+    fallbackUsed: false,
+    reason: `interval=${env.recommendationPollMs || 60000}ms`,
+  });
+
+  operationsPollerRef = startOperationsViewPolling({
+    sheetsClient,
+    spreadsheetId: env.googleSheetsId,
+    finalBidWorksheetName: env.googleFinalBidWorksheetName,
+    operationsWorksheetName: env.googleOperationsViewWorksheetName,
+    intervalMs: env.operationsViewRefreshMs,
+    logger: logger.child({ component: "operations-view" })
+  });
+
+  logger.info("Operations View refresh polling started", {
+    stage: "operations_view",
+    fallbackUsed: false,
+    reason: `interval=${env.operationsViewRefreshMs}ms sheet=${env.googleOperationsViewWorksheetName}`
   });
 
   const appendRideRow = createAppendRow({
@@ -688,6 +1251,15 @@ async function bootstrap() {
     logger: logger.child({ component: "sheets-append-upcoming" })
   });
 
+  const appendFinalBidRow = createAppendRow({
+    sheetsClient,
+    spreadsheetId: env.googleSheetsId,
+    worksheetName: env.googleFinalBidWorksheetName,
+    range: env.googleFinalBidRange,
+    rowBuilder: buildFinalBidSheetRow,
+    logger: logger.child({ component: "sheets-append-final-bid" })
+  });
+
   const appendUpcomingJobIfEligible = createUpcomingJobAppender({
     sheetsClient,
     spreadsheetId: env.googleSheetsId,
@@ -698,7 +1270,24 @@ async function bootstrap() {
     timeZone: env.appTimeZone
   });
 
-  const onMessage = createMessageHandler({
+  const appendFinalBidIfEligible = createFinalBidAppender({
+    appendRow: appendFinalBidRow,
+    config: {
+      enabled: env.finalBidEnabled,
+      minFare: env.finalBidMinFare,
+      minDistance: env.finalBidMinDistance,
+      maxDistance: env.finalBidMaxDistance,
+      minScore: env.finalBidMinScore,
+      allowedVehicles: env.finalBidAllowedVehicles,
+      excludedVehicles: env.finalBidExcludedVehicles,
+      allowedGroups: env.finalBidAllowedGroups,
+      requireFare: env.finalBidRequireFare,
+      requireDistance: env.finalBidRequireDistance
+    },
+    logger: logger.child({ component: "final-bid" })
+  });
+
+  activeMessageHandler = createMessageHandler({
     env,
     logger: logger.child({ component: "message-handler" }),
     dedupe,
@@ -709,7 +1298,14 @@ async function bootstrap() {
     osrmClient,
     appendRideRow,
     appendReviewRow,
-    appendUpcomingJobIfEligible
+    appendUpcomingJobIfEligible,
+    appendFinalBidIfEligible
+  });
+  resolvePipelineReady();
+
+  logger.info("Message processing pipeline ready", {
+    stage: "startup",
+    reason: "WhatsApp ready + downstream workflows configured"
   });
 
   const bootSummary = {
@@ -719,6 +1315,10 @@ async function bootstrap() {
     worksheetName: env.googleRidesWorksheetName,
     needsReviewWorksheetName: env.googleNeedsReviewWorksheetName,
     upcomingJobsWorksheetName: env.googleUpcomingJobsWorksheetName,
+    finalBidWorksheetName: env.googleFinalBidWorksheetName,
+    driversWorksheetName: env.googleDriversWorksheetName,
+    vehiclesWorksheetName: env.googleVehiclesWorksheetName,
+    operationsViewWorksheetName: env.googleOperationsViewWorksheetName,
     geocodingProvider: env.geocodingProvider || "",
     sheetsConfigured: Boolean(sheetsClient && env.googleSheetsId),
     googleCredentialsSource: env.googleCredentialsSource,
@@ -730,7 +1330,7 @@ async function bootstrap() {
 
   logger.info("Startup summary", {
     stage: "startup",
-    reason: `allowedGroups=${bootSummary.allowedGroups.length}, clientId=${bootSummary.whatsappClientId}, sessionDir=${bootSummary.sessionDir}, geocoder=${bootSummary.geocodingProvider}, sheetsConfigured=${bootSummary.sheetsConfigured}, sheetsCredentials=${bootSummary.googleCredentialsSource || "unknown"}, openaiConfigured=${bootSummary.openaiConfigured}, ridesSheet=${bootSummary.worksheetName}, reviewSheet=${bootSummary.needsReviewWorksheetName}, upcomingSheet=${bootSummary.upcomingJobsWorksheetName}`
+      reason: `allowedGroups=${bootSummary.allowedGroups.length}, clientId=${bootSummary.whatsappClientId}, sessionDir=${bootSummary.sessionDir}, geocoder=${bootSummary.geocodingProvider}, sheetsConfigured=${bootSummary.sheetsConfigured}, sheetsCredentials=${bootSummary.googleCredentialsSource || "unknown"}, openaiConfigured=${bootSummary.openaiConfigured}, ridesSheet=${bootSummary.worksheetName}, reviewSheet=${bootSummary.needsReviewWorksheetName}, upcomingSheet=${bootSummary.upcomingJobsWorksheetName}, finalBidSheet=${bootSummary.finalBidWorksheetName}, driversSheet=${bootSummary.driversWorksheetName}, vehiclesSheet=${bootSummary.vehiclesWorksheetName}, operationsViewSheet=${bootSummary.operationsViewWorksheetName}`
   });
   logger.debug("Startup details", {
     stage: "startup",
@@ -757,25 +1357,6 @@ async function bootstrap() {
       fallbackUsed: false
     });
   }
-
-  const client = await initializeWhatsAppClient({
-    sessionPath: sessionState.sessionPath,
-    clientId: sessionState.clientId,
-    startupTimeoutMs: env.whatsappStartupTimeoutMs,
-    persistedSessionDetected: sessionState.sessionFolderHasData,
-    qrImagePath: runtimeStatus.getSnapshot().qrImagePath,
-    onStateChange: (state, details = {}) => {
-      runtimeStatus.update(state, details);
-    },
-    logger: logger.child({ component: "whatsapp-client" }),
-    puppeteer: resolvePuppeteerOptions(),
-    onMessage
-  });
-  clientRef = client;
-
-  logger.info("WhatsApp startup completed", {
-    stage: "whatsapp_connect"
-  });
 
   return { client, server: serverRef };
 }
@@ -837,5 +1418,8 @@ if (require.main === module) {
 
 module.exports = {
   bootstrap,
-  verifyWorksheetTargetsReady
+  verifyWorksheetTargetsReady,
+  ensureWorksheetWithHeaders,
+  applyFinalBidAssignedDriverValidation,
+  applyTextFormatForHeaders
 };

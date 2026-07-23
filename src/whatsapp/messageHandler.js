@@ -75,12 +75,26 @@ function isBroadcastLike(message, chatId) {
   return false;
 }
 
+function isGroupLike(message, chat, chatId) {
+  if (chat?.isGroup === true) return true;
+
+  const candidates = [
+    chatId,
+    chat?.id?._serialized,
+    message?.from,
+    message?.to,
+    message?.author
+  ];
+
+  return candidates.some((candidate) => String(candidate || "").endsWith("@g.us"));
+}
+
 function shouldSkipMessage({ message, chat, chatId, allowFromMeMessages }) {
   if (message?.fromMe && !allowFromMeMessages) {
     return { skip: true, reason: "outgoing/self message" };
   }
   if (isBroadcastLike(message, chatId)) return { skip: true, reason: "broadcast/status message" };
-  if (!chat?.isGroup) return { skip: true, reason: "non-group chat" };
+  if (!isGroupLike(message, chat, chatId)) return { skip: true, reason: "non-group chat" };
   if (SYSTEM_MESSAGE_TYPES.has(String(message?.type || ""))) {
     return { skip: true, reason: `system message type: ${message.type}` };
   }
@@ -90,6 +104,15 @@ function shouldSkipMessage({ message, chat, chatId, allowFromMeMessages }) {
   if (!hasBody && !hasMedia) return { skip: true, reason: "empty body and no media" };
 
   return { skip: false, reason: "" };
+}
+
+function logIngestDebug(logger, enabled, message, meta = {}) {
+  if (!enabled || !logger || typeof logger.info !== "function") return;
+
+  logger.info(message, {
+    stage: "ingest_filter",
+    ...meta
+  });
 }
 
 function mergeLocalAndAi(localExtracted, aiNormalized) {
@@ -629,6 +652,7 @@ async function processRideAttempt({
   appendRow,
   appendReviewRow,
   appendUpcomingJobIfEligible,
+  appendFinalBidIfEligible,
   groupName,
   sourceName,
   receivedAt,
@@ -735,6 +759,26 @@ async function processRideAttempt({
 
   await targetAppender(ride);
 
+  if (routingDecision.target === "rides" && typeof appendFinalBidIfEligible === "function") {
+    try {
+      await appendFinalBidIfEligible(ride);
+    } catch (error) {
+      const summary = summarizeKnownError(error, {
+        stage: "final_bid",
+        defaultSummary: "Failed to evaluate or append Final Bid row",
+        fallbackUsed: true
+      });
+
+      logger.warn(summary.summary, {
+        stage: "final_bid",
+        refer: ride.refer,
+        fallbackUsed: true,
+        reason: summary.likelyCause || "Final Bid append failed after Rides success",
+        error
+      });
+    }
+  }
+
   if (routingDecision.target === "rides" && typeof appendUpcomingJobIfEligible === "function") {
     try {
       await appendUpcomingJobIfEligible(ride);
@@ -793,6 +837,7 @@ function createMessageHandler({
   appendRideRow,
   appendReviewRow,
   appendUpcomingJobIfEligible,
+  appendFinalBidIfEligible,
   appendRow
 }) {
   const allowedGroupMatcher = createAllowedGroupMatcher({
@@ -801,6 +846,7 @@ function createMessageHandler({
     allowedGroupNames: env?.allowedGroupNames
   });
   const allowFromMeMessages = Boolean(env?.allowFromMeMessages);
+  const ingestDebug = Boolean(env?.ingestDebug);
   let warnedAboutEmptyAllowList = false;
 
   return async function handleMessage(message) {
@@ -819,6 +865,13 @@ function createMessageHandler({
       const sourceName = await resolveSourceName(message);
       const receivedAt = resolveReceivedAtIso(message);
 
+      logIngestDebug(logger, ingestDebug, "WhatsApp message received", {
+        messageId,
+        chatId,
+        group: groupName,
+        reason: `fromMe=${Boolean(message?.fromMe)} isGroup=${isGroupLike(message, chat, chatId)} chatIsGroup=${Boolean(chat?.isGroup)} type=${safeTrim(message?.type || "unknown")} hasBody=${Boolean(safeTrim(message?.body || ""))} hasMedia=${Boolean(message?.hasMedia)}`
+      });
+
       const skipState = shouldSkipMessage({
         message,
         chat,
@@ -826,6 +879,12 @@ function createMessageHandler({
         allowFromMeMessages
       });
       if (skipState.skip) {
+        logIngestDebug(logger, ingestDebug, "WhatsApp message skipped", {
+          messageId,
+          chatId,
+          group: groupName,
+          reason: skipState.reason
+        });
         return;
       }
 
@@ -837,6 +896,12 @@ function createMessageHandler({
             fallbackUsed: true
           });
         }
+        logIngestDebug(logger, ingestDebug, "WhatsApp message skipped", {
+          messageId,
+          chatId,
+          group: groupName,
+          reason: "allowed group list is empty"
+        });
         return;
       }
 
@@ -847,8 +912,20 @@ function createMessageHandler({
       });
 
       if (!isAllowedGroup) {
+        logIngestDebug(logger, ingestDebug, "WhatsApp message skipped", {
+          messageId,
+          chatId: groupFilterId,
+          group: groupName,
+          reason: "group not in allowed groups"
+        });
         return;
       }
+
+      logIngestDebug(logger, ingestDebug, "WhatsApp message accepted", {
+        messageId,
+        chatId: groupFilterId,
+        group: groupName
+      });
 
       const normalizedBody = normalizeText(String(message.body || ""));
       const attempts = await buildMessageAttempts({
@@ -860,8 +937,21 @@ function createMessageHandler({
       });
 
       if (attempts.length === 0) {
+        logIngestDebug(logger, ingestDebug, "WhatsApp message skipped", {
+          messageId,
+          chatId: groupFilterId,
+          group: groupName,
+          reason: "no text/OCR attempts built"
+        });
         return;
       }
+
+      logIngestDebug(logger, ingestDebug, "WhatsApp ride extraction attempts built", {
+        messageId,
+        chatId: groupFilterId,
+        group: groupName,
+        reason: `attempts=${attempts.length}`
+      });
 
       const primaryAppender = appendRideRow || appendRow;
 
@@ -880,6 +970,7 @@ function createMessageHandler({
             appendRow: primaryAppender,
             appendReviewRow,
             appendUpcomingJobIfEligible,
+            appendFinalBidIfEligible,
             groupName,
             sourceName,
             receivedAt,

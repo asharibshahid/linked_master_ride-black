@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createMessageHandler } = require("../../src/whatsapp/messageHandler");
 const { createUpcomingJobAppender } = require("../../src/sheets/upcomingJobs");
+const { createFinalBidAppender } = require("../../src/bids/finalBid");
 const { DedupeStore } = require("../../src/utils/dedupe");
 const { createSilentLogger } = require("../helpers");
 
@@ -406,6 +407,162 @@ test("pipeline skips Upcoming Jobs >79 for low-fare rides but still appends to R
   assert.equal(appendRideCalls.length, 1);
   assert.equal(appendUpcomingCalls.length, 0);
   assert.ok(entries.some((entry) => entry.message === "Upcoming job skipped because fare <= 79"));
+});
+
+test("pipeline appends eligible clean rides to Final Bid after Rides", async () => {
+  const { logger } = createRecordingLogger();
+  const appendRideCalls = [];
+  const appendFinalBidCalls = [];
+  const allowedGroup = "120363408968321565@g.us";
+  const appendFinalBidIfEligible = createFinalBidAppender({
+    appendRow: async (payload) => {
+      appendFinalBidCalls.push(payload);
+      return { updatedRange: "Final Bid!A2", updatedRows: 1 };
+    },
+    config: {
+      minFare: 80,
+      maxDistance: 100,
+      minScore: 60
+    },
+    logger,
+    now: new Date("2026-07-18T12:00:00.000Z")
+  });
+
+  const handler = createMessageHandler({
+    env: {
+      allowedGroups: [allowedGroup],
+      appTimeZone: "Europe/London",
+      fareBase: 250,
+      farePerKm: 95,
+      defaultCurrency: "GBP"
+    },
+    logger,
+    dedupe: new DedupeStore({ logger: createSilentLogger() }),
+    localExtractor: {
+      extractWithAnalysis: () => ({
+        record: {
+          pickup_day_date: "Friday 13th March 2026",
+          starting_timing: "6:25 am",
+          pickup: "Heathrow Airport, Terminal 5",
+          drop_off: "SW1A 1AA",
+          required_vehicle: "Saloon Car",
+          fare: "145"
+        },
+        analysis: {
+          hadDateLikeText: true,
+          hadTimeLikeText: true,
+          selected: {
+            pickup: { value: "Heathrow Airport, Terminal 5", contaminated: false },
+            drop_off: { value: "SW1A 1AA", contaminated: false },
+            required_vehicle: { value: "Saloon Car", source: "vehicle_line" }
+          }
+        }
+      })
+    },
+    openaiNormalizer: {
+      normalizeWithOpenAI: async ({ extracted }) => extracted
+    },
+    geocoder: {
+      geocodeAddress: async () => ({ lat: 51.47, lng: -0.45 })
+    },
+    osrmClient: {
+      getRouteFromOSRM: async () => ({
+        distance_meters: 109435,
+        duration_seconds: 1200,
+        distance_text: "68",
+        duration_text: "20m"
+      })
+    },
+    appendRideRow: async (ride) => {
+      appendRideCalls.push(ride);
+      return { updatedRange: "Rides!A2", updatedRows: 1 };
+    },
+    appendFinalBidIfEligible
+  });
+
+  await handler(createAllowedGroupMessage("final-bid-eligible", { messageId: "FINAL-BID-HIGH" }));
+
+  assert.equal(appendRideCalls.length, 1);
+  assert.equal(appendFinalBidCalls.length, 1);
+  assert.equal(appendFinalBidCalls[0].Refer, appendRideCalls[0].refer);
+  assert.equal(appendFinalBidCalls[0].Status, "Pending");
+  assert.equal(appendFinalBidCalls[0].Fare, "145");
+  assert.equal(appendFinalBidCalls[0].Distance, "68");
+});
+
+test("pipeline skips Final Bid for rides that fail bid criteria but still appends to Rides", async () => {
+  const { logger, entries } = createRecordingLogger();
+  const appendRideCalls = [];
+  const appendFinalBidCalls = [];
+  const allowedGroup = "120363408968321565@g.us";
+  const appendFinalBidIfEligible = createFinalBidAppender({
+    appendRow: async (payload) => {
+      appendFinalBidCalls.push(payload);
+      return { updatedRange: "Final Bid!A2", updatedRows: 1 };
+    },
+    config: {
+      minFare: 80
+    },
+    logger
+  });
+
+  const handler = createMessageHandler({
+    env: {
+      allowedGroups: [allowedGroup],
+      appTimeZone: "Europe/London",
+      fareBase: 250,
+      farePerKm: 95,
+      defaultCurrency: "GBP"
+    },
+    logger,
+    dedupe: new DedupeStore({ logger: createSilentLogger() }),
+    localExtractor: {
+      extractWithAnalysis: () => ({
+        record: {
+          pickup_day_date: "Friday 13th March 2026",
+          starting_timing: "6:25 am",
+          pickup: "Heathrow Airport, Terminal 5",
+          drop_off: "SW1A 1AA",
+          required_vehicle: "Saloon Car",
+          fare: "60"
+        },
+        analysis: {
+          hadDateLikeText: true,
+          hadTimeLikeText: true,
+          selected: {
+            pickup: { value: "Heathrow Airport, Terminal 5", contaminated: false },
+            drop_off: { value: "SW1A 1AA", contaminated: false },
+            required_vehicle: { value: "Saloon Car", source: "vehicle_line" }
+          }
+        }
+      })
+    },
+    openaiNormalizer: {
+      normalizeWithOpenAI: async ({ extracted }) => extracted
+    },
+    geocoder: {
+      geocodeAddress: async () => ({ lat: 51.47, lng: -0.45 })
+    },
+    osrmClient: {
+      getRouteFromOSRM: async () => ({
+        distance_meters: 24140,
+        duration_seconds: 1200,
+        distance_text: "15",
+        duration_text: "20m"
+      })
+    },
+    appendRideRow: async (ride) => {
+      appendRideCalls.push(ride);
+      return { updatedRange: "Rides!A2", updatedRows: 1 };
+    },
+    appendFinalBidIfEligible
+  });
+
+  await handler(createAllowedGroupMessage("final-bid-low", { messageId: "FINAL-BID-LOW" }));
+
+  assert.equal(appendRideCalls.length, 1);
+  assert.equal(appendFinalBidCalls.length, 0);
+  assert.ok(entries.some((entry) => entry.message === "Final Bid skipped"));
 });
 
 test("enrich pipeline leaves distance and fare blank when coordinates are incomplete", async () => {

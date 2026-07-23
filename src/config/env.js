@@ -223,6 +223,22 @@ const env = Object.freeze({
     process.env.GOOGLE_SHEETS_UPCOMING_JOBS_WORKSHEET_NAME,
     "Upcoming Jobs >79"
   ),
+  googleFinalBidWorksheetName: safeString(
+    process.env.GOOGLE_SHEETS_FINAL_BID_WORKSHEET_NAME,
+    "Final Bid"
+  ),
+  googleDriversWorksheetName: safeString(
+    process.env.GOOGLE_SHEETS_DRIVERS_WORKSHEET_NAME,
+    "Drivers"
+  ),
+  googleVehiclesWorksheetName: safeString(
+    process.env.GOOGLE_SHEETS_VEHICLES_WORKSHEET_NAME,
+    "Vehicles"
+  ),
+  googleOperationsViewWorksheetName: safeString(
+    process.env.GOOGLE_SHEETS_OPERATIONS_VIEW_WORKSHEET_NAME,
+    "Operations View"
+  ),
   googleRidesRange: resolveWorksheetRange(
     process.env.GOOGLE_SHEETS_RIDES_RANGE,
     process.env.GOOGLE_SHEETS_RIDES_WORKSHEET_NAME,
@@ -237,6 +253,26 @@ const env = Object.freeze({
     process.env.GOOGLE_SHEETS_UPCOMING_JOBS_RANGE,
     process.env.GOOGLE_SHEETS_UPCOMING_JOBS_WORKSHEET_NAME,
     "Upcoming Jobs >79"
+  ),
+  googleFinalBidRange: resolveWorksheetRange(
+    process.env.GOOGLE_SHEETS_FINAL_BID_RANGE,
+    process.env.GOOGLE_SHEETS_FINAL_BID_WORKSHEET_NAME,
+    "Final Bid"
+  ),
+  googleDriversRange: resolveWorksheetRange(
+    process.env.GOOGLE_SHEETS_DRIVERS_RANGE,
+    process.env.GOOGLE_SHEETS_DRIVERS_WORKSHEET_NAME,
+    "Drivers"
+  ),
+  googleVehiclesRange: resolveWorksheetRange(
+    process.env.GOOGLE_SHEETS_VEHICLES_RANGE,
+    process.env.GOOGLE_SHEETS_VEHICLES_WORKSHEET_NAME,
+    "Vehicles"
+  ),
+  googleOperationsViewRange: resolveWorksheetRange(
+    process.env.GOOGLE_SHEETS_OPERATIONS_VIEW_RANGE,
+    process.env.GOOGLE_SHEETS_OPERATIONS_VIEW_WORKSHEET_NAME,
+    "Operations View"
   ),
   googleCredentialsPath: resolveGoogleCredentialsPath(),
   googleCredentialsJson: googleCredentialsState.json,
@@ -265,6 +301,7 @@ const env = Object.freeze({
   allowedGroups: mergedAllowedGroups,
   allowedGroupIds: dedupeStringArray(parsedAllowedGroupIds),
   allowedGroupNames: dedupeStringArray(parsedAllowedGroupNames),
+  ingestDebug: parseBoolean(process.env.INGEST_DEBUG || process.env.WHATSAPP_INGEST_DEBUG, false),
   allowFromMeMessages: parseBoolean(
     process.env.ALLOW_FROM_ME_MESSAGES || process.env.WHATSAPP_ALLOW_FROM_ME_TEST_MESSAGES,
     false
@@ -273,6 +310,53 @@ const env = Object.freeze({
   appTimeZone: safeString(process.env.APP_TIME_ZONE, "Europe/London"),
   fareBase: parseNumber(process.env.FARE_BASE, 250, { min: 0 }),
   farePerKm: parseNumber(process.env.FARE_PER_KM, 95, { min: 0 }),
+  finalBidEnabled: parseBoolean(process.env.FINAL_BID_ENABLED, true),
+  finalBidMinFare: parseNumber(process.env.FINAL_BID_MIN_FARE || process.env.BID_MIN_FARE, 80, {
+    min: 0
+  }),
+  finalBidMinDistance: parseNumber(
+    process.env.FINAL_BID_MIN_DISTANCE || process.env.BID_MIN_DISTANCE,
+    0,
+    { min: 0 }
+  ),
+  finalBidMaxDistance: parseNumber(
+    process.env.FINAL_BID_MAX_DISTANCE || process.env.BID_MAX_DISTANCE,
+    0,
+    { min: 0 }
+  ),
+  finalBidMinScore: parseNumber(
+    process.env.FINAL_BID_MIN_SCORE || process.env.BID_MIN_SCORE,
+    60,
+    { min: 0, max: 100 }
+  ),
+  finalBidAllowedVehicles: parseArray(
+    process.env.FINAL_BID_ALLOWED_VEHICLES || process.env.BID_ALLOWED_VEHICLES
+  ),
+  finalBidExcludedVehicles: parseArray(
+    process.env.FINAL_BID_EXCLUDED_VEHICLES || process.env.BID_EXCLUDED_VEHICLES
+  ),
+  finalBidAllowedGroups: parseArray(
+    process.env.FINAL_BID_ALLOWED_GROUPS || process.env.BID_ALLOWED_GROUPS
+  ),
+  finalBidRequireFare: parseBoolean(process.env.FINAL_BID_REQUIRE_FARE, true),
+  finalBidRequireDistance: parseBoolean(process.env.FINAL_BID_REQUIRE_DISTANCE, false),
+  calendarEnabled: parseBoolean(process.env.CALENDAR_ENABLED, true),
+  googleCalendarId: safeString(process.env.GOOGLE_CALENDAR_ID, "primary"),
+  calendarApprovalPollMs: parseNumber(process.env.CALENDAR_APPROVAL_POLL_MS, 60000, {
+    integer: true,
+    min: 10000,
+    max: 30 * 60 * 1000
+  }),
+  calendarEventDurationMinutes: parseNumber(process.env.CALENDAR_EVENT_DURATION_MINUTES, 60, {
+    integer: true,
+    min: 5,
+    max: 24 * 60
+  }),
+  operationsViewRefreshMs: parseNumber(process.env.OPERATIONS_VIEW_REFRESH_MS, 60000, {
+    integer: true,
+    min: 10000,
+    max: 30 * 60 * 1000
+  }),
   geocodingProvider: safeString(process.env.GEOCODING_PROVIDER, "nominatim").toLowerCase(),
   geocodingBaseUrl: safeString(process.env.GEOCODING_BASE_URL),
   geocodingUserAgent: safeString(process.env.GEOCODING_USER_AGENT, "ride-bot/1.0 (geocode)"),

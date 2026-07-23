@@ -4,7 +4,12 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { validateSheetsConfig } = require("../../src/sheets/sheetsClient");
-const { verifyWorksheetTargetsReady } = require("../../src/app");
+const {
+  verifyWorksheetTargetsReady,
+  ensureWorksheetWithHeaders,
+  applyFinalBidAssignedDriverValidation,
+  applyTextFormatForHeaders
+} = require("../../src/app");
 const {
   classifyAppendFailure,
   buildAppendRange,
@@ -372,6 +377,187 @@ test("verifyWorksheetTargetsReady accepts rides, review, and upcoming sheets wit
     ],
     logger: { info: () => {} }
   });
+});
+
+test("ensureWorksheetWithHeaders creates missing Final Bid worksheet and initializes headers", async () => {
+  const calls = [];
+  let titles = ["Rides"];
+  let headerValues = [];
+  const finalBidHeaders = [
+    "Refer",
+    "Group Name",
+    "Source Name",
+    "Pickup Day & Date",
+    "Starting Timing",
+    "Pickup",
+    "Drop Off",
+    "Distance",
+    "Fare",
+    "Required Vehicle",
+    "Bid Score",
+    "Reason",
+    "Status",
+    "Assigned Driver",
+    "Calendar Status",
+    "Calendar Event ID",
+    "Created Time"
+  ];
+  const sheetsClient = {
+    spreadsheets: {
+      get: async () => ({
+        data: {
+          sheets: titles.map((title) => ({ properties: { title } }))
+        }
+      }),
+      batchUpdate: async (request) => {
+        calls.push({ type: "batchUpdate", request });
+        titles.push("Final Bid");
+        return {};
+      },
+      values: {
+        get: async () => ({
+          data: {
+            values: headerValues.length > 0 ? [headerValues] : []
+          }
+        }),
+        update: async (request) => {
+          calls.push({ type: "values.update", request });
+          headerValues = request.requestBody.values[0];
+          return {};
+        }
+      }
+    }
+  };
+
+  await ensureWorksheetWithHeaders({
+    sheetsClient,
+    spreadsheetId: "sheet-id",
+    worksheetName: "Final Bid",
+    headers: finalBidHeaders,
+    logger: { info: () => {} }
+  });
+
+  assert.deepEqual(
+    calls.map((call) => call.type),
+    ["batchUpdate", "values.update"]
+  );
+  assert.deepEqual(headerValues, finalBidHeaders);
+});
+
+test("applyFinalBidAssignedDriverValidation points Assigned Driver to Drivers IDs", async () => {
+  const batchUpdateCalls = [];
+  const finalBidHeaders = [
+    "Refer",
+    "Group Name",
+    "Source Name",
+    "Pickup Day & Date",
+    "Starting Timing",
+    "Pickup",
+    "Drop Off",
+    "Distance",
+    "Fare",
+    "Required Vehicle",
+    "Bid Score",
+    "Reason",
+    "Status",
+    "Assigned Driver",
+    "Calendar Status",
+    "Calendar Event ID",
+    "Created Time"
+  ];
+  const sheetsClient = {
+    spreadsheets: {
+      get: async () => ({
+        data: {
+          sheets: [
+            { properties: { title: "Final Bid", sheetId: 10 } },
+            { properties: { title: "Drivers", sheetId: 11 } }
+          ]
+        }
+      }),
+      values: {
+        get: async () => ({
+          data: {
+            values: [finalBidHeaders]
+          }
+        })
+      },
+      batchUpdate: async (request) => {
+        batchUpdateCalls.push(request);
+        return {};
+      }
+    }
+  };
+
+  await applyFinalBidAssignedDriverValidation({
+    sheetsClient,
+    spreadsheetId: "sheet-id",
+    finalBidWorksheetName: "Final Bid",
+    driversWorksheetName: "Drivers",
+    logger: { info: () => {} }
+  });
+
+  assert.equal(batchUpdateCalls.length, 1);
+  const validation = batchUpdateCalls[0].requestBody.requests[0].setDataValidation;
+  assert.equal(validation.range.sheetId, 10);
+  assert.equal(validation.range.startRowIndex, 1);
+  assert.equal(validation.range.startColumnIndex, 13);
+  assert.equal(validation.range.endColumnIndex, 14);
+  assert.equal(validation.rule.condition.type, "ONE_OF_RANGE");
+  assert.equal(validation.rule.condition.values[0].userEnteredValue, "=Drivers!$A$2:$A");
+  assert.equal(validation.rule.showCustomUi, true);
+});
+
+test("applyTextFormatForHeaders formats configured sheet columns as plain text", async () => {
+  const batchUpdateCalls = [];
+  const sheetsClient = {
+    spreadsheets: {
+      get: async () => ({
+        data: {
+          sheets: [{ properties: { title: "Drivers", sheetId: 11 } }]
+        }
+      }),
+      values: {
+        get: async () => ({
+          data: {
+            values: [[
+              "Driver ID",
+              "Driver Name",
+              "WhatsApp Number",
+              "Vehicle ID",
+              "Current Status",
+              "Location"
+            ]]
+          }
+        })
+      },
+      batchUpdate: async (request) => {
+        batchUpdateCalls.push(request);
+        return {};
+      }
+    }
+  };
+
+  await applyTextFormatForHeaders({
+    sheetsClient,
+    spreadsheetId: "sheet-id",
+    worksheetName: "Drivers",
+    headerNames: ["Driver ID", "WhatsApp Number", "Vehicle ID"],
+    logger: { info: () => {} }
+  });
+
+  assert.equal(batchUpdateCalls.length, 1);
+  const requests = batchUpdateCalls[0].requestBody.requests;
+  assert.equal(requests.length, 3);
+  assert.deepEqual(
+    requests.map((request) => request.repeatCell.range.startColumnIndex),
+    [0, 2, 3]
+  );
+  assert.ok(
+    requests.every(
+      (request) => request.repeatCell.cell.userEnteredFormat.numberFormat.type === "TEXT"
+    )
+  );
 });
 
 test("classifyAppendFailure distinguishes common Google Sheets failures", () => {

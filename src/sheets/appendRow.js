@@ -293,6 +293,8 @@ function createAppendRow(options = {}) {
       mode: env.logMode,
       baseMeta: { component: "sheets-append" }
     });
+  const rowBuilder =
+    typeof options.rowBuilder === "function" ? options.rowBuilder : buildRowFromRideObject;
   let headerCache = null;
   let headerCacheUpdatedAt = 0;
 
@@ -325,7 +327,7 @@ function createAppendRow(options = {}) {
     assertSheetPreconditions({ sheetsClient, spreadsheetId, worksheetName });
 
     const headers = await resolveHeaders();
-    const row = buildRowFromRideObject(ride, headers);
+    const row = rowBuilder(ride, headers);
     if (row.length !== headers.length) {
       throw new SheetsAppendError("Invalid sheet row shape", {
         code: "SHEETS_ROW_INVALID",
