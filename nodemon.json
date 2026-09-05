@@ -1,0 +1,11 @@
+{
+  "watch": ["src", "test", "package.json"],
+  "ext": "js,json",
+  "ignore": [
+    "data/**",
+    ".wwebjs_auth/**",
+    ".wwebjs_cache/**",
+    "credentials.json",
+    ".env"
+  ]
+}

@@ -50,7 +50,7 @@ Behavior:
 - Uses stable `WHATSAPP_CLIENT_ID` + stable `WHATSAPP_SESSION_PATH`.
 - Resolves session path to absolute path.
 - Detects whether saved session data exists before startup.
-- Waits for `ready` with timeout (`WHATSAPP_STARTUP_TIMEOUT_MS`, default 90s).
+- Waits for `ready`; startup timeout only reports status and keeps the saved session unless stale-session auto-clear is explicitly enabled.
 - Emits clear lifecycle logs for QR/auth/ready/disconnect/state/loading.
 - No auth/session files are deleted on normal shutdown.
 
@@ -70,6 +70,7 @@ Behavior:
 - `OPENAI_API_KEY`
 - `OPENAI_MODEL` (default `gpt-4.1-mini`)
 - `WHATSAPP_STARTUP_TIMEOUT_MS` (default `90000`)
+- `WHATSAPP_AUTO_CLEAR_STALE_SESSION` (default `false`; keep false to preserve login until manual reset)
 - `GOOGLE_SHEETS_WORKSHEET_NAME` (default `Sheet1`)
 - `GOOGLE_SHEETS_RANGE` (default `<worksheet>!A:J`)
 - `GOOGLE_CREDENTIALS_JSON` (raw JSON or base64 JSON; used directly in memory)
@@ -164,6 +165,30 @@ npm start
 npm run dev
 ```
 
+### Supabase database setup
+
+Supabase is supported as the production database foundation while Google Sheets remains working.
+
+Required:
+
+```env
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+DATABASE_URL=
+DATABASE_SSL=true
+```
+
+Run:
+
+```bash
+npm run db:migrate
+npm run db:seed
+npm run db:retention
+```
+
+See `docs/supabase_migration.md` for schema, demo data, and retention rules.
+
 ## 6) QR Scan Flow
 
 1. Start the service.
@@ -171,6 +196,7 @@ npm run dev
 3. In WhatsApp mobile app: `Linked Devices` -> `Link a Device`.
 4. After successful login, session is saved in `WHATSAPP_SESSION_PATH`.
 5. On restart, service should reuse saved session and reach `ready` without QR.
+6. If WhatsApp reports an invalid/revoked session, the service preserves the session folder and shows status at `/qr`; delete the session folder manually only when you intentionally want a fresh QR login.
 
 ## 7) Group Filtering
 

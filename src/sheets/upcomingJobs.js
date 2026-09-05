@@ -6,17 +6,29 @@ const { collapseWhitespace, safeTrim } = require("../utils/text");
 
 const MONTH_INDEX = Object.freeze({
   january: 1,
+  jan: 1,
   february: 2,
+  feb: 2,
   march: 3,
+  mar: 3,
   april: 4,
+  apr: 4,
   may: 5,
   june: 6,
+  jun: 6,
   july: 7,
+  jul: 7,
   august: 8,
+  aug: 8,
   september: 9,
+  sep: 9,
+  sept: 9,
   october: 10,
+  oct: 10,
   november: 11,
-  december: 12
+  nov: 11,
+  december: 12,
+  dec: 12
 });
 
 const NETWORK_ERROR_CODES = new Set([
@@ -53,7 +65,17 @@ function normalizeYear(value) {
   return parsed;
 }
 
-function parsePickupDateParts(value) {
+function isValidDateParts({ year, month, day } = {}) {
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return false;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function parsePickupDateParts(value, options = {}) {
   const text = collapseWhitespace(String(value || "").replace(/,/g, " "));
   if (!text) return null;
 
@@ -62,8 +84,9 @@ function parsePickupDateParts(value) {
     const year = Number(match[1]);
     const month = Number(match[2]);
     const day = Number(match[3]);
-    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-      return { year, month, day };
+    const parts = { year, month, day };
+    if (isValidDateParts(parts)) {
+      return parts;
     }
   }
 
@@ -74,8 +97,9 @@ function parsePickupDateParts(value) {
     const day = Number(match[1]);
     const month = MONTH_INDEX[String(match[2] || "").toLowerCase()];
     const year = normalizeYear(match[3]);
-    if (month && year && day >= 1 && day <= 31) {
-      return { year, month, day };
+    const parts = { year, month, day };
+    if (month && year && isValidDateParts(parts)) {
+      return parts;
     }
   }
 
@@ -84,18 +108,23 @@ function parsePickupDateParts(value) {
     const day = Number(match[1]);
     const month = MONTH_INDEX[String(match[2] || "").toLowerCase()];
     const year = normalizeYear(match[3]);
-    if (month && year && day >= 1 && day <= 31) {
-      return { year, month, day };
+    const parts = { year, month, day };
+    if (month && year && isValidDateParts(parts)) {
+      return parts;
     }
   }
 
   match = text.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b/);
   if (match) {
-    const day = Number(match[1]);
-    const month = Number(match[2]);
+    const first = Number(match[1]);
+    const second = Number(match[2]);
+    const numericDateOrder = String(options.numericDateOrder || "dmy").toLowerCase();
+    const day = numericDateOrder === "mdy" ? second : first;
+    const month = numericDateOrder === "mdy" ? first : second;
     const year = normalizeYear(match[3]);
-    if (year && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-      return { year, month, day };
+    const parts = { year, month, day };
+    if (year && isValidDateParts(parts)) {
+      return parts;
     }
   }
 
@@ -208,7 +237,7 @@ function resolveTimeZoneDateTime(parts, timeZone) {
 }
 
 function parsePickupDateTime(dateValue, timeValue, options = {}) {
-  const dateParts = parsePickupDateParts(dateValue);
+  const dateParts = parsePickupDateParts(dateValue, options);
   const timeParts = parsePickupTimeParts(timeValue);
   if (!dateParts || !timeParts) return null;
 
@@ -222,6 +251,106 @@ function parsePickupDateTime(dateValue, timeValue, options = {}) {
   );
 }
 
+function buildPickupSortKey(record = {}) {
+  const dateParts = parsePickupDateParts(readRideField(record, "pickup_day_date", "Pickup Day & Date"));
+  const timeParts = parsePickupTimeParts(readRideField(record, "starting_timing", "Starting Timing"));
+
+  if (!dateParts) {
+    return {
+      invalidDate: 1,
+      dateValue: Number.POSITIVE_INFINITY,
+      invalidTime: 1,
+      timeValue: Number.POSITIVE_INFINITY
+    };
+  }
+
+  return {
+    invalidDate: 0,
+    dateValue: Date.UTC(dateParts.year, dateParts.month - 1, dateParts.day),
+    invalidTime: timeParts ? 0 : 1,
+    timeValue: timeParts ? timeParts.hour * 60 + timeParts.minute : Number.POSITIVE_INFINITY
+  };
+}
+
+function comparePickupSortKeys(left, right) {
+  if (left.invalidDate !== right.invalidDate) return left.invalidDate - right.invalidDate;
+  if (left.dateValue !== right.dateValue) return left.dateValue - right.dateValue;
+  if (left.invalidTime !== right.invalidTime) return left.invalidTime - right.invalidTime;
+  if (left.timeValue !== right.timeValue) return left.timeValue - right.timeValue;
+  return 0;
+}
+
+function sortRideRecordsByPickupDateTime(records = []) {
+  return (Array.isArray(records) ? records : [])
+    .map((record, index) => ({
+      record,
+      index,
+      sortKey: buildPickupSortKey(record)
+    }))
+    .sort((left, right) => {
+      const comparison = comparePickupSortKeys(left.sortKey, right.sortKey);
+      return comparison || left.index - right.index;
+    })
+    .map((entry) => entry.record);
+}
+
+function columnIndexToLetter(index) {
+  let value = Number(index) + 1;
+  if (!Number.isFinite(value) || value < 1) return "A";
+
+  let output = "";
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    output = String.fromCharCode(65 + remainder) + output;
+    value = Math.floor((value - 1) / 26);
+  }
+  return output;
+}
+
+function buildSheetValuesFromRecords(headers = [], rows = []) {
+  return rows.map((row) => headers.map((header) => safeTrim(row[header])));
+}
+
+function canRewriteSheetRows(sheetsClient) {
+  return Boolean(
+    sheetsClient?.spreadsheets?.values?.clear &&
+      sheetsClient?.spreadsheets?.values?.update
+  );
+}
+
+async function rewriteUpcomingJobsRows({
+  sheetsClient,
+  spreadsheetId,
+  worksheetName,
+  headers,
+  rows
+}) {
+  if (!canRewriteSheetRows(sheetsClient)) {
+    return { sorted: false, reason: "sheet_update_unavailable" };
+  }
+
+  const sortedRows = sortRideRecordsByPickupDateTime(rows);
+  const values = buildSheetValuesFromRecords(headers, sortedRows);
+  const lastColumn = columnIndexToLetter(Math.max(headers.length - 1, 0));
+  const dataRange = `${buildAppendRange({ range: "", worksheetName })}!A2:${lastColumn}`;
+
+  await sheetsClient.spreadsheets.values.clear({
+    spreadsheetId,
+    range: dataRange
+  });
+
+  await sheetsClient.spreadsheets.values.update({
+    spreadsheetId,
+    range: dataRange,
+    valueInputOption: "RAW",
+    requestBody: {
+      values
+    }
+  });
+
+  return { sorted: true, reason: "sorted", rows: sortedRows.length };
+}
+
 function buildUpcomingDedupeKey(ride = {}) {
   const pickup = normalizeComparableText(readRideField(ride, "pickup", "Pickup"));
   const dropOff = normalizeComparableText(readRideField(ride, "drop_off", "Drop Off"));
@@ -230,6 +359,36 @@ function buildUpcomingDedupeKey(ride = {}) {
   );
 
   return `${pickup}|${dropOff}|${startingTiming}`;
+}
+
+async function sortUpcomingJobsSheet({
+  sheetsClient,
+  spreadsheetId,
+  worksheetName,
+  logger = { warn: () => {} }
+}) {
+  if (!canRewriteSheetRows(sheetsClient)) {
+    return { sorted: false, reason: "sheet_update_unavailable" };
+  }
+
+  const { headers, rows } = await loadExistingUpcomingRows({
+    sheetsClient,
+    spreadsheetId,
+    worksheetName,
+    logger
+  });
+
+  if (rows.length <= 1) {
+    return { sorted: false, reason: "not_enough_rows" };
+  }
+
+  return rewriteUpcomingJobsRows({
+    sheetsClient,
+    spreadsheetId,
+    worksheetName,
+    headers,
+    rows
+  });
 }
 
 function isUpcomingHighValueRide(ride = {}, options = {}) {
@@ -359,13 +518,13 @@ async function loadExistingUpcomingRows({
 }
 
 async function appendUpcomingJobIfEligible(ride, options = {}) {
-  const logger =
-    options.logger ||
-    env.logger || {
-      info: () => {},
-      warn: () => {},
-      error: () => {}
-    };
+  const sourceLogger = options.logger || env.logger || {};
+  const logger = {
+    info: typeof sourceLogger.info === "function" ? sourceLogger.info.bind(sourceLogger) : () => {},
+    warn: typeof sourceLogger.warn === "function" ? sourceLogger.warn.bind(sourceLogger) : () => {},
+    debug: typeof sourceLogger.debug === "function" ? sourceLogger.debug.bind(sourceLogger) : () => {},
+    error: typeof sourceLogger.error === "function" ? sourceLogger.error.bind(sourceLogger) : () => {}
+  };
   const timeZone = options.timeZone || env.appTimeZone || "Europe/London";
   const appendRow = options.appendRow;
   const sheetsClient = options.sheetsClient;
@@ -388,43 +547,6 @@ async function appendUpcomingJobIfEligible(ride, options = {}) {
   });
 
   if (!eligibility.eligible) {
-    if (eligibility.reason === "pickup_drop_missing") {
-      logger.info("Upcoming job skipped because pickup/drop is blank", {
-        stage: "upcoming_jobs",
-        fallbackUsed: true,
-        refer: safeTrim(ride?.refer)
-      });
-    } else if (eligibility.reason === "fare_too_low") {
-      logger.info("Upcoming job skipped because fare <= 79", {
-        stage: "upcoming_jobs",
-        fallbackUsed: true,
-        refer: safeTrim(ride?.refer),
-        fare: readRideField(ride, "fare", "Fare")
-      });
-    } else if (eligibility.reason === "pickup_datetime_invalid") {
-      logger.info("Upcoming job skipped because pickup datetime is invalid or missing", {
-        stage: "upcoming_jobs",
-        fallbackUsed: true,
-        refer: safeTrim(ride?.refer),
-        pickupDayDate: readRideField(ride, "pickup_day_date", "Pickup Day & Date"),
-        startingTiming: readRideField(ride, "starting_timing", "Starting Timing")
-      });
-    } else if (eligibility.reason === "pickup_datetime_past") {
-      logger.info("Upcoming job skipped because pickup datetime is in the past", {
-        stage: "upcoming_jobs",
-        fallbackUsed: true,
-        refer: safeTrim(ride?.refer),
-        pickupDateTime: eligibility.pickupDateTime?.toISOString() || ""
-      });
-    } else {
-      logger.info("Upcoming job skipped because fare is missing or invalid", {
-        stage: "upcoming_jobs",
-        fallbackUsed: true,
-        refer: safeTrim(ride?.refer),
-        fare: readRideField(ride, "fare", "Fare")
-      });
-    }
-
     return {
       appended: false,
       reason: eligibility.reason
@@ -432,7 +554,7 @@ async function appendUpcomingJobIfEligible(ride, options = {}) {
   }
 
   const dedupeKey = buildUpcomingDedupeKey(ride);
-  const { rows } = await loadExistingUpcomingRows({
+  const { headers, rows } = await loadExistingUpcomingRows({
     sheetsClient,
     spreadsheetId,
     worksheetName,
@@ -441,12 +563,6 @@ async function appendUpcomingJobIfEligible(ride, options = {}) {
 
   const duplicateExists = rows.some((row) => buildUpcomingDedupeKey(row) === dedupeKey);
   if (duplicateExists) {
-    logger.info("Upcoming job skipped because duplicate exists", {
-      stage: "upcoming_jobs",
-      fallbackUsed: true,
-      refer: safeTrim(ride?.refer),
-      dedupeKey
-    });
     return {
       appended: false,
       reason: "duplicate_exists"
@@ -454,6 +570,24 @@ async function appendUpcomingJobIfEligible(ride, options = {}) {
   }
 
   await appendRow(ride);
+  try {
+    const appendedRow = buildSheetRowObject(ride);
+    await rewriteUpcomingJobsRows({
+      sheetsClient,
+      spreadsheetId,
+      worksheetName,
+      headers,
+      rows: [...rows, appendedRow]
+    });
+  } catch (error) {
+    logger.warn("Upcoming Jobs sort failed", {
+      stage: "upcoming_jobs",
+      fallbackUsed: true,
+      refer: safeTrim(ride?.refer),
+      reason: safeTrim(error?.message) || "Unable to sort Upcoming Jobs sheet",
+      error
+    });
+  }
 
   logger.info("Upcoming job appended", {
     stage: "upcoming_jobs",
@@ -478,6 +612,8 @@ function createUpcomingJobAppender(options = {}) {
 module.exports = {
   parseFare,
   parsePickupDateTime,
+  sortRideRecordsByPickupDateTime,
+  sortUpcomingJobsSheet,
   buildUpcomingDedupeKey,
   isUpcomingHighValueRide,
   appendUpcomingJobIfEligible,

@@ -1,0 +1,29 @@
+.qr-card {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(160px, 1fr);
+  gap: 16px;
+  align-items: center;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--input);
+}
+
+.qr-card img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  padding: 8px;
+  border-radius: 3px;
+  background: #fff;
+}
+
+.qr-card strong { color: var(--text); }
+.qr-card p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
+
+@media (max-width: 560px) {
+  .qr-card { grid-template-columns: 1fr; }
+  .qr-card img { max-width: 280px; margin: 0 auto; }
+}

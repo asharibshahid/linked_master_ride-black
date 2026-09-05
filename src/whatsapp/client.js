@@ -125,6 +125,13 @@ function clearQrImageFile(qrImagePath) {
   return true;
 }
 
+function removeDirectory(dirPath) {
+  const targetPath = safeTrim(dirPath);
+  if (!targetPath || !fs.existsSync(targetPath)) return false;
+  fs.rmSync(targetPath, { recursive: true, force: true });
+  return true;
+}
+
 function saveQrFallbackFile({ qrCode, clientId }) {
   const safeClientId = sanitizeFileSegment(clientId);
   const filePath = path.join(os.tmpdir(), `ride-bot-whatsapp-qr-${safeClientId}.txt`);
@@ -240,7 +247,7 @@ function buildStartupTimeoutHint({ tracker, persistedSessionDetected }) {
 
 function createDefaultClient({ sessionPath, clientId, puppeteerOptions, logger }) {
   if (logger) {
-    logger.info("WhatsApp browser executable selected", {
+    logger.debug("WhatsApp browser executable selected", {
       stage: "whatsapp_connect",
       fallbackUsed: false,
       reason: safeTrim(puppeteerOptions?.executablePath) || "default puppeteer resolution"
@@ -341,9 +348,11 @@ function attachLifecycleListeners({
   qrImageGenerator,
   onStateChange,
   clientId,
-  headlessEnabled
+  headlessEnabled,
+  preserveSessionOnStartupFailure
 }) {
   let timeoutHandle = null;
+  let lastQrNoticeAt = 0;
 
   function clearStartupTimeout() {
     if (!timeoutHandle) return;
@@ -372,8 +381,36 @@ function attachLifecycleListeners({
   }
 
   timeoutHandle = setTimeout(() => {
+    timeoutHandle = null;
     tracker.pushState("startup_timeout", "ready state did not arrive in time");
     const hint = buildStartupTimeoutHint({ tracker, persistedSessionDetected });
+
+    if (tracker.hasState("qr_required") && !tracker.hasState("authenticated")) {
+      logger.warn("Waiting for WhatsApp QR scan", {
+        stage: "whatsapp_auth",
+        fallbackUsed: true,
+        reason: hint,
+        timeoutMs: startupTimeoutMs
+      });
+      return;
+    }
+
+    if (preserveSessionOnStartupFailure) {
+      emitStateChange({ onStateChange, logger }, "startup_timeout", {
+        qrAvailable: false,
+        qrImagePath,
+        error: hint
+      });
+      logger.warn("WhatsApp ready timeout; session preserved and still waiting", {
+        stage: "whatsapp_connect",
+        fallbackUsed: true,
+        reason: hint,
+        timeoutMs: startupTimeoutMs,
+        latestState: tracker.getLatestState()
+      });
+      return;
+    }
+
     const timeoutError = createStartupError(
       "WhatsApp startup failed: persisted session did not become ready",
       "WHATSAPP_STARTUP_TIMEOUT",
@@ -400,14 +437,18 @@ function attachLifecycleListeners({
   }, startupTimeoutMs);
 
   client.on("qr", async (qrCode) => {
+    const shouldLogQrNotice = Date.now() - lastQrNoticeAt >= 5 * 60 * 1000;
+    if (shouldLogQrNotice) lastQrNoticeAt = Date.now();
     tracker.pushState("qr_required", "no valid persisted session");
     emitStateChange({ onStateChange, logger }, "qr_required", {
       qrAvailable: false,
       qrImagePath
     });
-    logger.info("QR required because no valid session exists", {
-      stage: "whatsapp_auth"
-    });
+    if (shouldLogQrNotice) {
+      logger.info("WhatsApp QR ready for scanning", {
+        stage: "whatsapp_auth"
+      });
+    }
 
     try {
       const savedQrPath = await saveQrImageFile({
@@ -424,10 +465,12 @@ function attachLifecycleListeners({
         error: ""
       });
 
-      logger.info("QR generated and saved", {
-        stage: "whatsapp_auth",
-        reason: savedQrPath
-      });
+      if (shouldLogQrNotice) {
+        logger.info("WhatsApp QR image updated", {
+          stage: "whatsapp_auth",
+          reason: savedQrPath
+        });
+      }
     } catch (error) {
       emitStateChange({ onStateChange, logger }, "qr_required", {
         qrAvailable: false,
@@ -469,7 +512,7 @@ function attachLifecycleListeners({
           clientId
         });
 
-        logger.warn(
+        logger.debug(
           "QR generated but terminal rendering failed. Scan from the opened browser window or use fallback file.",
           {
             stage: "whatsapp_auth",
@@ -479,7 +522,7 @@ function attachLifecycleListeners({
           }
         );
       } catch (fallbackError) {
-        logger.warn(
+        logger.debug(
           "QR generated but terminal rendering failed. Scan from the opened browser window or enable qrcode-terminal fallback.",
           {
             stage: "whatsapp_auth",
@@ -506,7 +549,7 @@ function attachLifecycleListeners({
       qrAvailable: false,
       qrImagePath
     });
-    logger.info("WhatsApp authenticated", {
+    logger.debug("WhatsApp authenticated", {
       stage: "whatsapp_auth"
     });
   });
@@ -535,7 +578,7 @@ function attachLifecycleListeners({
     logger.info("WhatsApp connected", {
       stage: "whatsapp_connect"
     });
-    logger.info("Bot ready; QR not required", {
+    logger.debug("Bot ready; QR not required", {
       stage: "whatsapp_connect",
       reason: qrRemoved ? "stale QR removed" : "no QR file to remove"
     });
@@ -555,6 +598,15 @@ function attachLifecycleListeners({
       likelyCause: reason
     });
 
+    if (preserveSessionOnStartupFailure) {
+      logger.warn("WhatsApp auth failed; session preserved", {
+        stage: "whatsapp_auth",
+        fallbackUsed: true,
+        reason
+      });
+      return;
+    }
+
     logger.error("WhatsApp auth failure", {
       stage: "whatsapp_auth",
       fallbackUsed: true,
@@ -566,6 +618,11 @@ function attachLifecycleListeners({
 
   client.on("disconnected", (reason) => {
     const reasonText = safeTrim(reason) || "unknown";
+    emitStateChange({ onStateChange, logger }, "disconnected", {
+      qrAvailable: false,
+      qrImagePath,
+      error: reasonText
+    });
     logger.warn("WhatsApp disconnected but session preserved", {
       stage: "whatsapp_connect",
       fallbackUsed: true,
@@ -575,6 +632,15 @@ function attachLifecycleListeners({
     if (tracker.isReady() || tracker.isSettled()) return;
 
     if (/(logout|invalid|401|conflict|revoke)/i.test(reasonText)) {
+      if (preserveSessionOnStartupFailure) {
+        logger.warn("WhatsApp disconnected before ready; session preserved", {
+          stage: "whatsapp_connect",
+          fallbackUsed: true,
+          reason: "Manual session reset is required only if relinking is needed"
+        });
+        return;
+      }
+
       const startupError = createStartupError(
         "WhatsApp disconnected before ready",
         "WHATSAPP_DISCONNECTED_BEFORE_READY",
@@ -589,7 +655,7 @@ function attachLifecycleListeners({
   });
 
   client.on("change_state", (state) => {
-    logger.info("WhatsApp state changed", {
+    logger.debug("WhatsApp state changed", {
       stage: "whatsapp_connect",
       reason: safeTrim(state)
     });
@@ -655,6 +721,10 @@ async function initializeWhatsAppClient(options = {}) {
     typeof options.persistedSessionDetected === "boolean"
       ? options.persistedSessionDetected
       : isNonEmptyDirectory(resolvedPaths.sessionFolderPath);
+  const autoClearStaleSession =
+    typeof options.autoClearStaleSession === "boolean"
+      ? options.autoClearStaleSession
+      : env.whatsappAutoClearStaleSession;
 
   const startupTimeoutMs = normalizeTimeoutMs(
     options.startupTimeoutMs || env.whatsappStartupTimeoutMs,
@@ -662,14 +732,14 @@ async function initializeWhatsAppClient(options = {}) {
   );
   const headlessEnabled = isHeadlessEnabled(options?.puppeteer?.headless);
 
-  logger.info(
+  logger.debug(
     persistedSessionDetected ? "WhatsApp session found" : "No WhatsApp session found",
     {
       stage: "whatsapp_auth",
       reason: resolvedPaths.sessionFolderPath
     }
   );
-  logger.info(
+  logger.debug(
     persistedSessionDetected ? "Reusing saved login" : "Waiting for QR scan to create login",
     {
       stage: "whatsapp_auth",
@@ -688,89 +758,151 @@ async function initializeWhatsAppClient(options = {}) {
             logger
           });
 
-  let client;
-  try {
-    client = clientFactory({
-      sessionPath: resolvedPaths.sessionPath,
-      clientId: resolvedPaths.clientId
-    });
-  } catch (error) {
-    throw createStartupError("WhatsApp startup failed", "WHATSAPP_CLIENT_FACTORY_FAILED", {
-      stage: "whatsapp_connect",
-      likelyCause: "Unable to construct WhatsApp client",
-      cause: error
-    });
-  }
-
-  const tracker = createStartupTracker({
-    startupTimeoutMs,
-    persistedSessionDetected
-  });
-
-  attachLifecycleListeners({
-    client,
-    logger,
-    tracker,
-    startupTimeoutMs,
-    persistedSessionDetected,
-    qrRenderer: options.qrRenderer,
-    qrImagePath: options.qrImagePath,
-    qrImageGenerator: options.qrImageGenerator,
-    onStateChange: options.onStateChange,
-    clientId: resolvedPaths.clientId,
-    headlessEnabled
-  });
-  attachMessageListeners({
-    client,
-    onMessage: options.onMessage,
-    logger
-  });
-
-  logger.info("Waiting for WhatsApp ready state", {
-    stage: "whatsapp_connect",
-    reason: `timeout=${startupTimeoutMs}ms`
-  });
-
-  Promise.resolve()
-    .then(() => client.initialize())
-    .catch((error) => {
-      if (tracker.isSettled()) {
-        logger.warn("WhatsApp initialize reported late error", {
-          stage: "whatsapp_connect",
-          fallbackUsed: true
-        });
-        return;
-      }
-
-      const summary = summarizeKnownError(error, {
-        stage: "whatsapp_connect",
-        defaultSummary: "WhatsApp startup failed",
-        fallbackUsed: true
+  async function startAttempt({ attemptNumber, attemptPersistedSessionDetected }) {
+    let client;
+    try {
+      client = clientFactory({
+        sessionPath: resolvedPaths.sessionPath,
+        clientId: resolvedPaths.clientId,
+        attemptNumber,
+        persistedSessionDetected: attemptPersistedSessionDetected
       });
-
-      const startupError = createStartupError("WhatsApp startup failed", "WHATSAPP_INIT_FAILED", {
+      if (typeof options.onClientCreated === "function") {
+        options.onClientCreated(client);
+      }
+    } catch (error) {
+      throw createStartupError("WhatsApp startup failed", "WHATSAPP_CLIENT_FACTORY_FAILED", {
         stage: "whatsapp_connect",
-        likelyCause: summary.likelyCause || "Browser runtime failed to initialize",
+        likelyCause: "Unable to construct WhatsApp client",
         cause: error
       });
+    }
 
-      logger.error("WhatsApp startup failed", {
-        stage: "whatsapp_connect",
-        fallbackUsed: true,
-        reason: startupError.likelyCause,
-        error
-      });
-
-      tracker.reject(startupError);
+    const tracker = createStartupTracker({
+      startupTimeoutMs,
+      persistedSessionDetected: attemptPersistedSessionDetected
     });
 
-  await tracker.promise;
-  logger.info("Saved session reused and ready", {
-    stage: "whatsapp_auth",
-    reason: resolvedPaths.sessionFolderPath
-  });
+    attachLifecycleListeners({
+      client,
+      logger,
+      tracker,
+      startupTimeoutMs,
+      persistedSessionDetected: attemptPersistedSessionDetected,
+      qrRenderer: options.qrRenderer,
+      qrImagePath: options.qrImagePath,
+      qrImageGenerator: options.qrImageGenerator,
+      onStateChange: options.onStateChange,
+      clientId: resolvedPaths.clientId,
+      headlessEnabled,
+      preserveSessionOnStartupFailure: !autoClearStaleSession
+    });
+    attachMessageListeners({
+      client,
+      onMessage: options.onMessage,
+      logger
+    });
 
-  return client;
+    logger.debug("Waiting for WhatsApp ready state", {
+      stage: "whatsapp_connect",
+      reason: `timeout=${startupTimeoutMs}ms attempt=${attemptNumber}`
+    });
+
+    Promise.resolve()
+      .then(() => client.initialize())
+      .catch((error) => {
+        if (tracker.isSettled()) {
+          logger.warn("WhatsApp initialize reported late error", {
+            stage: "whatsapp_connect",
+            fallbackUsed: true
+          });
+          return;
+        }
+
+        const summary = summarizeKnownError(error, {
+          stage: "whatsapp_connect",
+          defaultSummary: "WhatsApp startup failed",
+          fallbackUsed: true
+        });
+
+        const startupError = createStartupError("WhatsApp startup failed", "WHATSAPP_INIT_FAILED", {
+          stage: "whatsapp_connect",
+          likelyCause: summary.likelyCause || "Browser runtime failed to initialize",
+          cause: error
+        });
+
+        logger.error("WhatsApp startup failed", {
+          stage: "whatsapp_connect",
+          fallbackUsed: true,
+          reason: startupError.likelyCause,
+          error
+        });
+
+        tracker.reject(startupError);
+      });
+
+    try {
+      await tracker.promise;
+    } catch (error) {
+      error.whatsappClient = client;
+      throw error;
+    }
+
+    logger.debug("Saved session reused and ready", {
+      stage: "whatsapp_auth",
+      reason: resolvedPaths.sessionFolderPath
+    });
+
+    return client;
+  }
+
+  function canRetryWithFreshSession(error, attemptNumber) {
+    if (!autoClearStaleSession || attemptNumber > 1 || !persistedSessionDetected) return false;
+    return [
+      "WHATSAPP_STARTUP_TIMEOUT",
+      "WHATSAPP_AUTH_FAILED",
+      "WHATSAPP_DISCONNECTED_BEFORE_READY",
+      "WHATSAPP_INIT_FAILED",
+      "WHATSAPP_RUNTIME_ERROR"
+    ].includes(error?.code);
+  }
+
+  let attemptPersistedSessionDetected = persistedSessionDetected;
+  for (let attemptNumber = 1; attemptNumber <= 2; attemptNumber += 1) {
+    try {
+      return await startAttempt({ attemptNumber, attemptPersistedSessionDetected });
+    } catch (error) {
+      if (!canRetryWithFreshSession(error, attemptNumber)) {
+        throw error;
+      }
+
+      try {
+        if (typeof error.whatsappClient?.destroy === "function") {
+          await error.whatsappClient.destroy();
+        }
+      } catch (destroyError) {
+        logger.warn("Unable to close stale WhatsApp client", {
+          stage: "whatsapp_auth",
+          fallbackUsed: true,
+          reason: safeTrim(destroyError?.message) || "Client destroy failed"
+        });
+      }
+
+      removeDirectory(resolvedPaths.sessionFolderPath);
+      logger.warn("Stale WhatsApp session cleared; restart QR scan", {
+        stage: "whatsapp_auth",
+        fallbackUsed: true,
+        reason: resolvedPaths.sessionFolderPath
+      });
+
+      attemptPersistedSessionDetected = false;
+    }
+  }
+
+  throw createStartupError("WhatsApp startup failed", "WHATSAPP_STARTUP_FAILED", {
+    stage: "whatsapp_connect",
+    likelyCause: "Unable to start WhatsApp client after session recovery"
+  });
 }
 
 module.exports = {

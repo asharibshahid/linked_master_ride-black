@@ -375,7 +375,7 @@ test("verifyWorksheetTargetsReady accepts rides, review, and upcoming sheets wit
         ]
       }
     ],
-    logger: { info: () => {} }
+    logger: { info: () => {}, debug: () => {} }
   });
 });
 
@@ -444,6 +444,61 @@ test("ensureWorksheetWithHeaders creates missing Final Bid worksheet and initial
   assert.deepEqual(headerValues, finalBidHeaders);
 });
 
+test("ensureWorksheetWithHeaders skips startup setup instead of crashing on Sheets quota exhaustion", async () => {
+  let getCalls = 0;
+  const warningMessages = [];
+  const quotaError = new Error(
+    "Quota exceeded for quota metric 'Read requests' and limit 'Read requests per minute per user'"
+  );
+  quotaError.response = {
+    status: 429,
+    data: {
+      error: {
+        message: quotaError.message
+      }
+    }
+  };
+
+  const sheetsClient = {
+    spreadsheets: {
+      get: async () => {
+        getCalls += 1;
+        throw quotaError;
+      },
+      batchUpdate: async () => {
+        throw new Error("should not create sheet when quota is exhausted");
+      },
+      values: {
+        get: async () => {
+          throw new Error("should not read headers when quota is exhausted");
+        },
+        update: async () => {
+          throw new Error("should not update headers when quota is exhausted");
+        }
+      }
+    }
+  };
+
+  await ensureWorksheetWithHeaders({
+    sheetsClient,
+    spreadsheetId: "sheet-id",
+    worksheetName: "Final Bid",
+    headers: ["Refer"],
+    logger: {
+      info: () => {},
+      debug: () => {},
+      warn: (message) => warningMessages.push(message)
+    }
+  });
+
+  assert.equal(getCalls, 4);
+  assert.ok(
+    warningMessages.includes(
+      "Google Sheets worksheet setup skipped because quota is temporarily exhausted"
+    )
+  );
+});
+
 test("applyFinalBidAssignedDriverValidation points Assigned Driver to Drivers IDs", async () => {
   const batchUpdateCalls = [];
   const finalBidHeaders = [
@@ -494,7 +549,7 @@ test("applyFinalBidAssignedDriverValidation points Assigned Driver to Drivers ID
     spreadsheetId: "sheet-id",
     finalBidWorksheetName: "Final Bid",
     driversWorksheetName: "Drivers",
-    logger: { info: () => {} }
+    logger: { info: () => {}, debug: () => {} }
   });
 
   assert.equal(batchUpdateCalls.length, 1);
@@ -524,9 +579,10 @@ test("applyTextFormatForHeaders formats configured sheet columns as plain text",
               "Driver ID",
               "Driver Name",
               "WhatsApp Number",
-              "Vehicle ID",
-              "Current Status",
-              "Location"
+              "Status",
+              "Current Location",
+              "Working Hours",
+              "Vehicle ID"
             ]]
           }
         })
@@ -543,7 +599,7 @@ test("applyTextFormatForHeaders formats configured sheet columns as plain text",
     spreadsheetId: "sheet-id",
     worksheetName: "Drivers",
     headerNames: ["Driver ID", "WhatsApp Number", "Vehicle ID"],
-    logger: { info: () => {} }
+    logger: { info: () => {}, debug: () => {} }
   });
 
   assert.equal(batchUpdateCalls.length, 1);
@@ -551,7 +607,7 @@ test("applyTextFormatForHeaders formats configured sheet columns as plain text",
   assert.equal(requests.length, 3);
   assert.deepEqual(
     requests.map((request) => request.repeatCell.range.startColumnIndex),
-    [0, 2, 3]
+    [0, 2, 6]
   );
   assert.ok(
     requests.every(

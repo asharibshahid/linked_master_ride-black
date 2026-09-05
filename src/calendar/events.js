@@ -1,28 +1,112 @@
-const { safeTrim } = require("../utils/text");
+const { safeTrim, collapseWhitespace } = require("../utils/text");
 
-function buildRideCalendarSummary(approval = {}) {
-  const refer = safeTrim(approval.refer || approval.Refer);
-  const driverId = safeTrim(approval.assigned_driver || approval["Assigned Driver"]);
-  const pickup = safeTrim(approval.pickup || approval.Pickup);
-  const dropOff = safeTrim(approval.drop_off || approval["Drop Off"]);
-  const parts = [
-    refer || "Ride",
-    driverId ? `Driver ${driverId}` : "",
-    pickup && dropOff ? `${pickup} to ${dropOff}` : pickup || dropOff
-  ].filter(Boolean);
-  return parts.join(" | ");
+const DIRECTION = Object.freeze({
+  OUTBOUND: { label: "Outbound", emoji: "➡️" },
+  RETURN: { label: "Return", emoji: "↩️" }
+});
+
+const VEHICLE_EMOJI_RULES = Object.freeze([
+  { pattern: /\b9\s*-?\s*seat/i, emoji: "🚌" },
+  { pattern: /\b8\s*-?\s*seat/i, emoji: "🚐" },
+  { pattern: /\b6\s*-?\s*seat/i, emoji: "🚐" },
+  { pattern: /\bmpv\b/i, emoji: "🚐" },
+  { pattern: /\bestate\b/i, emoji: "🚙" },
+  { pattern: /\bsaloon\b/i, emoji: "🚗" }
+]);
+
+const DEFAULT_VEHICLE_EMOJI = "🚗";
+const PASSENGER_COUNT_PATTERN = /(\d{1,2})\s*(?:persons?|pax|passengers?)\b/i;
+
+function normalizeComparableText(value) {
+  return collapseWhitespace(String(value || "")).toLowerCase();
+}
+
+function resolveVehicleEmoji(vehicleText) {
+  const text = normalizeComparableText(vehicleText);
+  const rule = VEHICLE_EMOJI_RULES.find((entry) => entry.pattern.test(text));
+  return rule ? rule.emoji : DEFAULT_VEHICLE_EMOJI;
+}
+
+function resolvePassengerCount(approval = {}) {
+  const explicit = safeTrim(approval.passenger_count || approval["Passenger Count"]);
+  if (/^\d+$/.test(explicit)) return explicit;
+
+  const vehicleText = safeTrim(approval.required_vehicle || approval["Required Vehicle"]);
+  const match = vehicleText.match(PASSENGER_COUNT_PATTERN);
+  return match ? match[1] : "1";
+}
+
+function resolveDirection(approval = {}) {
+  const haystack = normalizeComparableText(
+    [
+      approval.group_name || approval["Group Name"],
+      approval.pickup || approval.Pickup,
+      approval.drop_off || approval["Drop Off"]
+    ].join(" ")
+  );
+
+  return /\breturn\b/.test(haystack) ? DIRECTION.RETURN : DIRECTION.OUTBOUND;
+}
+
+function formatEventCode(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(date);
+
+  const map = {};
+  parts.forEach((part) => {
+    map[part.type] = part.value;
+  });
+  const hour = map.hour === "24" ? "00" : map.hour;
+
+  return `${map.day}${map.month}${map.year}-${hour}${map.minute}`;
+}
+
+function buildGoogleMapsLink(address) {
+  const text = safeTrim(address);
+  if (!text) return "";
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(text)}`;
+}
+
+function buildRideCalendarSummary(approval = {}, options = {}) {
+  const vehicleEmoji = resolveVehicleEmoji(approval.required_vehicle || approval["Required Vehicle"]);
+  const companyCode = safeTrim(options.companyCode);
+  const eventCode = formatEventCode(approval.startDateTime, options.timeZone || "Europe/London");
+  const pax = resolvePassengerCount(approval);
+  const direction = resolveDirection(approval);
+
+  const prefix = [vehicleEmoji, companyCode, eventCode].filter(Boolean).join(" ");
+  return `${prefix} - ${pax} Pax ${direction.emoji}`;
 }
 
 function buildRideCalendarDescription(approval = {}) {
-  return [
-    `Driver ID: ${safeTrim(approval.assigned_driver || approval["Assigned Driver"])}`,
-    `Pickup: ${safeTrim(approval.pickup || approval.Pickup)}`,
-    `Drop Off: ${safeTrim(approval.drop_off || approval["Drop Off"])}`,
-    `Date: ${safeTrim(approval.pickup_day_date || approval["Pickup Day & Date"])}`,
-    `Time: ${safeTrim(approval.starting_timing || approval["Starting Timing"])}`,
+  const pickup = safeTrim(approval.pickup || approval.Pickup);
+  const dropOff = safeTrim(approval.drop_off || approval["Drop Off"]);
+  const driverName =
+    safeTrim(approval.driver_name || approval["Driver Name"]) ||
+    safeTrim(approval.assigned_driver || approval["Assigned Driver"]);
+
+  const lines = [
+    `Ride ID: ${safeTrim(approval.refer || approval.Refer)}`,
+    `Driver: ${driverName}`,
     `Vehicle: ${safeTrim(approval.required_vehicle || approval["Required Vehicle"])}`,
-    `Refer: ${safeTrim(approval.refer || approval.Refer)}`
-  ].join("\n");
+    `Pickup: ${pickup}`,
+    `Dropoff: ${dropOff}`,
+    `Fare: ${safeTrim(approval.fare || approval.Fare)}`,
+    `Distance: ${safeTrim(approval.distance || approval.Distance)}`,
+    `Payment: ${safeTrim(approval.payment_status || approval["Payment Status"]) || "Not specified"}`,
+    `Source Group: ${safeTrim(approval.group_name || approval["Group Name"])}`,
+    `Pickup Map: ${buildGoogleMapsLink(pickup)}`,
+    `Dropoff Map: ${buildGoogleMapsLink(dropOff)}`
+  ];
+
+  return lines.join("\n");
 }
 
 function buildRideCalendarEvent(approval = {}, options = {}) {
@@ -35,11 +119,12 @@ function buildRideCalendarEvent(approval = {}, options = {}) {
     ? Math.max(5, Math.trunc(options.durationMinutes))
     : 60;
   const endDateTime = new Date(startDateTime.getTime() + durationMinutes * 60 * 1000);
-  const timeZone = safeTrim(options.timeZone, "Europe/London");
+  const timeZone = safeTrim(options.timeZone) || "Europe/London";
 
   return {
-    summary: buildRideCalendarSummary(approval),
+    summary: buildRideCalendarSummary(approval, { timeZone, companyCode: options.companyCode }),
     description: buildRideCalendarDescription(approval),
+    location: safeTrim(approval.pickup || approval.Pickup),
     start: {
       dateTime: startDateTime.toISOString(),
       timeZone
@@ -108,6 +193,11 @@ async function deleteCalendarEvent({ calendarClient, calendarId, eventId }) {
 }
 
 module.exports = {
+  resolveVehicleEmoji,
+  resolvePassengerCount,
+  resolveDirection,
+  formatEventCode,
+  buildGoogleMapsLink,
   buildRideCalendarSummary,
   buildRideCalendarDescription,
   buildRideCalendarEvent,

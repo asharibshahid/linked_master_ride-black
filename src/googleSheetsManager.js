@@ -10,62 +10,103 @@ const GOOGLE_SHEETS_ID = process.env.GOOGLE_SHEETS_ID;
 const DRIVERS_WORKSHEET_NAME = 'Drivers';
 const VEHICLES_WORKSHEET_NAME = 'Vehicles';
 const RECOMMENDATIONS_WORKSHEET_NAME = 'Driver Recommendations';
+const DRIVER_SCHEDULE_WORKSHEET_NAME = 'Driver Schedule';
+const LINKED_RIDES_WORKSHEET_NAME = 'Linked Rides';
+const VEHICLE_SCHEDULE_WORKSHEET_NAME = 'Vehicle Schedule';
 
 const DRIVERS_HEADERS = [
   'Driver ID',
   'Driver Name',
   'WhatsApp Number',
-  'Vehicle ID',
   'Status',
   'Current Location',
-  'Home Location',
   'Working Hours',
-  'Preferred Areas',
-  'Last Assigned Ride',
-  'Total Jobs',
-  'Performance Score',
+  'Vehicle ID',
 ];
 
 const VEHICLES_HEADERS = [
   'Vehicle ID',
-  'Vehicle Category',
-  'Make',
-  'Model',
+  'Vehicle Type',
   'Seats',
   'Registration',
-  'Assigned Driver ID',
-  'Status',
+  'Driver ID',
 ];
 
-const RECOMMENDATION_HEADERS = [ // Updated headers
+const RECOMMENDATION_HEADERS = [
   'Ride ID',
   'Pickup',
   'Drop Off',
   'Required Vehicle',
   'Recommended Driver',
-  'Vehicle Match Score',
-  'Availability Score',
-  'Calendar Score', // Added Calendar Score
-  'Distance Score',
-  'Route Compatibility Score',
-  'Total Score',
+  'Recommended Vehicle',
+  'Linked Ride ID',
+  'Previous Ride',
+  'Next Ride',
+  'Time Gap',
+  'Distance Between',
+  'Estimated Saving',
+  'Score',
   'Reason',
+  'Created Time',
+  'Status',
+  'Assignment Status',
+];
+
+const DRIVER_SCHEDULE_HEADERS = [
+  'Assignment ID',
+  'Driver ID',
+  'Ride ID',
+  'Pickup',
+  'Drop Off',
+  'Start Time',
+  'End Time',
+  'Status',
+  'Next Available Time',
+  'Current Location',
+  'Previous Ride ID',
+  'Next Ride ID',
+];
+
+const LINKED_RIDES_HEADERS = [
+  'Link ID',
+  'First Ride ID',
+  'Second Ride ID',
+  'Driver ID',
+  'Vehicle ID',
+  'Previous Drop',
+  'Next Pickup',
+  'Time Gap',
+  'Distance Between',
+  'Saving Estimate',
+  'Status',
+];
+
+const VEHICLE_SCHEDULE_HEADERS = [
+  'Vehicle ID',
+  'Ride ID',
+  'Driver ID',
+  'Start Time',
+  'End Time',
+  'Status',
 ];
 
 
 const DRIVERS_DEMO_DATA = [
-  ['D-001', 'John Smith', '+447700000001', 'V-001', 'Available', 'Heathrow', 'London', '06:00-23:00', 'Central London, West London', '', '0', '100'],
-  ['D-002', 'Sarah Connor', '+447700000002', 'V-002', 'Available', 'Gatwick', 'London', '06:00-23:00', 'South London, East London', '', '0', '100'],
-  ['D-003', 'Mike Johnson', '+447700000003', 'V-003', 'Busy', 'Central London', 'London', '08:00-20:00', 'Central London', '', '0', '95'],
+  ['001', 'Ali Khan', '+447700000001', 'Available', 'Heathrow', 'Any', 'V001'],
+  ['002', 'Sarah Connor', '+447700000002', 'Available', 'Gatwick', 'Any', 'V002'],
+  ['003', 'Mike Johnson', '+447700000003', 'Busy', 'Central London', '08:00-20:00', 'V003'],
 ];
 
 const VEHICLES_DEMO_DATA = [
-  ['V-001', 'MPV', 'Toyota', 'Camry', '7', 'ABC-123', 'D-001', 'Active'],
-  ['V-002', 'Estate', 'Ford', 'Explorer', '5', 'XYZ-789', 'D-002', 'Active'],
-  ['V-003', 'Saloon', 'Honda', 'Odyssey', '4', 'LMN-456', 'D-003', 'Active'],
+  ['V001', 'MPV', '8', 'ABC-123', '001'],
+  ['V002', 'Estate', '5', 'XYZ-789', '002'],
+  ['V003', 'Saloon', '4', 'LMN-456', '003'],
 ];
 
 const RECOMMENDATIONS_DEMO_DATA = []; // No demo data needed for recommendations
+const DRIVER_SCHEDULE_DEMO_DATA = [];
+const LINKED_RIDES_DEMO_DATA = [];
+const VEHICLE_SCHEDULE_DEMO_DATA = [];
 
 let sheets;
 
@@ -218,6 +259,9 @@ async function setupDriverAssignmentSheets() {
   await verifyAndInitializeSheet(DRIVERS_WORKSHEET_NAME, DRIVERS_HEADERS, DRIVERS_DEMO_DATA);
   await verifyAndInitializeSheet(VEHICLES_WORKSHEET_NAME, VEHICLES_HEADERS, VEHICLES_DEMO_DATA);
   await verifyAndInitializeSheet(RECOMMENDATIONS_WORKSHEET_NAME, RECOMMENDATION_HEADERS, RECOMMENDATIONS_DEMO_DATA);
+  await verifyAndInitializeSheet(DRIVER_SCHEDULE_WORKSHEET_NAME, DRIVER_SCHEDULE_HEADERS, DRIVER_SCHEDULE_DEMO_DATA);
+  await verifyAndInitializeSheet(VEHICLE_SCHEDULE_WORKSHEET_NAME, VEHICLE_SCHEDULE_HEADERS, VEHICLE_SCHEDULE_DEMO_DATA);
+  await verifyAndInitializeSheet(LINKED_RIDES_WORKSHEET_NAME, LINKED_RIDES_HEADERS, LINKED_RIDES_DEMO_DATA);
 
   console.log('Google Sheets setup for AI driver assignment completed.');
 }
@@ -231,4 +275,10 @@ module.exports = {
   DRIVERS_HEADERS,
   VEHICLES_HEADERS,
   RECOMMENDATION_HEADERS,
+  DRIVER_SCHEDULE_WORKSHEET_NAME,
+  DRIVER_SCHEDULE_HEADERS,
+  LINKED_RIDES_WORKSHEET_NAME,
+  LINKED_RIDES_HEADERS,
+  VEHICLE_SCHEDULE_WORKSHEET_NAME,
+  VEHICLE_SCHEDULE_HEADERS,
 };

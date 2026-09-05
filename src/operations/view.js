@@ -1,4 +1,5 @@
 const { buildAppendRange } = require("../sheets/appendRow");
+const { sortRideRecordsByPickupDateTime } = require("../sheets/upcomingJobs");
 const { safeTrim } = require("../utils/text");
 const { loadFinalBidRows } = require("../calendar/approvalWorkflow");
 
@@ -45,7 +46,7 @@ function mapFinalBidRecordToOperationsRow(record = {}) {
 }
 
 function buildOperationsRows(records = []) {
-  return (Array.isArray(records) ? records : [])
+  return sortRideRecordsByPickupDateTime(Array.isArray(records) ? records : [])
     .filter((record) => toCell(record.Refer))
     .map(mapFinalBidRecordToOperationsRow);
 }
@@ -61,7 +62,7 @@ async function refreshOperationsView(options = {}) {
     spreadsheetId,
     finalBidWorksheetName = "Final Bid",
     operationsWorksheetName = "Operations View",
-    logger = { info: () => {}, warn: () => {} }
+    logger = { info: () => {}, warn: () => {}, debug: () => {} }
   } = options;
 
   if (!sheetsClient) throw new Error("Google Sheets client is not configured");
@@ -91,19 +92,17 @@ async function refreshOperationsView(options = {}) {
     });
   }
 
-  logger.info("Operations View refreshed", {
-    stage: "operations_view",
-    fallbackUsed: false,
-    reason: `rows=${rows.length}`
-  });
-
   return {
     rowsWritten: rows.length
   };
 }
 
 function startOperationsViewPolling(options = {}) {
-  const logger = options.logger || { info: () => {}, warn: () => {} };
+  const logger = {
+    info: typeof options.logger?.info === "function" ? options.logger.info.bind(options.logger) : () => {},
+    warn: typeof options.logger?.warn === "function" ? options.logger.warn.bind(options.logger) : () => {},
+    debug: typeof options.logger?.debug === "function" ? options.logger.debug.bind(options.logger) : () => {}
+  };
   const intervalMs = Number.isFinite(options.intervalMs)
     ? Math.max(10000, Math.trunc(options.intervalMs))
     : 60000;

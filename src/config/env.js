@@ -204,8 +204,34 @@ const env = Object.freeze({
   nodeEnv: safeString(process.env.NODE_ENV, "development"),
   logLevel: safeString(process.env.LOG_LEVEL, "info").toLowerCase(),
   logMode: safeString(process.env.LOG_MODE).toLowerCase() || undefined,
+  openaiEnabled: parseBoolean(process.env.OPENAI_ENABLED, false),
+  openaiExtractionEnabled: parseBoolean(process.env.OPENAI_EXTRACTION_ENABLED, false),
+  bidAiReviewEnabled: parseBoolean(process.env.BID_AI_REVIEW_ENABLED, false),
   openaiApiKey: safeString(process.env.OPENAI_API_KEY),
   openaiModel: safeString(process.env.OPENAI_MODEL, "gpt-4.1-mini"),
+  dashboardAuthToken: safeString(process.env.DASHBOARD_AUTH_TOKEN),
+  dashboardDefaultActor: safeString(process.env.DASHBOARD_DEFAULT_ACTOR, "Dashboard"),
+  // Separate dashboard deployments (for example Vercel) must be explicitly allowed.
+  // Keep this empty by default so the API is not opened to arbitrary browser origins.
+  dashboardAllowedOrigins: dedupeStringArray([
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    ...parseArray(process.env.DASHBOARD_ALLOWED_ORIGINS)
+  ]),
+  supabaseUrl: safeString(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL),
+  supabaseAnonKey: safeString(process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
+  supabaseServiceRoleKey: safeString(process.env.SUPABASE_SERVICE_ROLE_KEY),
+  databaseUrl: safeString(
+    process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL || process.env.POSTGRES_URL
+  ),
+  databasePrimaryEnabled: parseBoolean(process.env.DATABASE_PRIMARY_ENABLED, false),
+  databaseSheetsBackupEnabled: parseBoolean(process.env.DATABASE_SHEETS_BACKUP_ENABLED, true),
+  databaseRetentionEnabled: parseBoolean(process.env.DATABASE_RETENTION_ENABLED, false),
+  databaseRetentionPollMs: parseNumber(process.env.DATABASE_RETENTION_POLL_MS, 60 * 60 * 1000, {
+    integer: true,
+    min: 60 * 1000,
+    max: 7 * 24 * 60 * 60 * 1000
+  }),
   googleSheetsId: safeString(
     process.env.GOOGLE_SHEETS_ID || process.env.GOOGLE_SHEETS_SPREADSHEET_ID
   ),
@@ -238,6 +264,34 @@ const env = Object.freeze({
   googleOperationsViewWorksheetName: safeString(
     process.env.GOOGLE_SHEETS_OPERATIONS_VIEW_WORKSHEET_NAME,
     "Operations View"
+  ),
+  googleDriverScheduleWorksheetName: safeString(
+    process.env.GOOGLE_SHEETS_DRIVER_SCHEDULE_WORKSHEET_NAME,
+    "Driver Schedule"
+  ),
+  googleVehicleScheduleWorksheetName: safeString(
+    process.env.GOOGLE_SHEETS_VEHICLE_SCHEDULE_WORKSHEET_NAME,
+    "Vehicle Schedule"
+  ),
+  googleLinkedRidesWorksheetName: safeString(
+    process.env.GOOGLE_SHEETS_LINKED_RIDES_WORKSHEET_NAME,
+    "Linked Rides"
+  ),
+  googleBidTrackerWorksheetName: safeString(
+    process.env.GOOGLE_SHEETS_BID_TRACKER_WORKSHEET_NAME,
+    "Bid Tracker"
+  ),
+  googleDispatchCriteriaWorksheetName: safeString(
+    process.env.GOOGLE_SHEETS_DISPATCH_CRITERIA_WORKSHEET_NAME,
+    "Dispatch Criteria"
+  ),
+  googleAuditLogWorksheetName: safeString(
+    process.env.GOOGLE_SHEETS_AUDIT_LOG_WORKSHEET_NAME,
+    "Audit Log"
+  ),
+  googleArchiveWorksheetName: safeString(
+    process.env.GOOGLE_SHEETS_ARCHIVE_WORKSHEET_NAME,
+    "Ride Archive"
   ),
   googleRidesRange: resolveWorksheetRange(
     process.env.GOOGLE_SHEETS_RIDES_RANGE,
@@ -274,6 +328,57 @@ const env = Object.freeze({
     process.env.GOOGLE_SHEETS_OPERATIONS_VIEW_WORKSHEET_NAME,
     "Operations View"
   ),
+  googleDriverScheduleRange: resolveWorksheetRange(
+    process.env.GOOGLE_SHEETS_DRIVER_SCHEDULE_RANGE,
+    process.env.GOOGLE_SHEETS_DRIVER_SCHEDULE_WORKSHEET_NAME,
+    "Driver Schedule"
+  ),
+  googleVehicleScheduleRange: resolveWorksheetRange(
+    process.env.GOOGLE_SHEETS_VEHICLE_SCHEDULE_RANGE,
+    process.env.GOOGLE_SHEETS_VEHICLE_SCHEDULE_WORKSHEET_NAME,
+    "Vehicle Schedule"
+  ),
+  googleLinkedRidesRange: resolveWorksheetRange(
+    process.env.GOOGLE_SHEETS_LINKED_RIDES_RANGE,
+    process.env.GOOGLE_SHEETS_LINKED_RIDES_WORKSHEET_NAME,
+    "Linked Rides"
+  ),
+  googleBidTrackerRange: resolveWorksheetRange(
+    process.env.GOOGLE_SHEETS_BID_TRACKER_RANGE,
+    process.env.GOOGLE_SHEETS_BID_TRACKER_WORKSHEET_NAME,
+    "Bid Tracker"
+  ),
+  googleDispatchCriteriaRange: resolveWorksheetRange(
+    process.env.GOOGLE_SHEETS_DISPATCH_CRITERIA_RANGE,
+    process.env.GOOGLE_SHEETS_DISPATCH_CRITERIA_WORKSHEET_NAME,
+    "Dispatch Criteria"
+  ),
+  googleAuditLogRange: resolveWorksheetRange(
+    process.env.GOOGLE_SHEETS_AUDIT_LOG_RANGE,
+    process.env.GOOGLE_SHEETS_AUDIT_LOG_WORKSHEET_NAME,
+    "Audit Log"
+  ),
+  googleArchiveRange: resolveWorksheetRange(
+    process.env.GOOGLE_SHEETS_ARCHIVE_RANGE,
+    process.env.GOOGLE_SHEETS_ARCHIVE_WORKSHEET_NAME,
+    "Ride Archive"
+  ),
+  prebookGoogleSheetsId: safeString(process.env.PREBOOK_GOOGLE_SHEETS_ID),
+  prebookWorksheetName: safeString(process.env.PREBOOK_WORKSHEET_NAME, "PreBook"),
+  whatsappSourceGoogleSheetsId: safeString(process.env.WHATSAPP_SOURCE_GOOGLE_SHEETS_ID),
+  whatsappSourceWorksheetNames: parseArray(
+    process.env.WHATSAPP_SOURCE_WORKSHEET_NAMES || "Saloon,MPV"
+  ),
+  jobLinkerEnabled: parseBoolean(process.env.JOB_LINKER_ENABLED, true),
+  jobLinkerSyncMs: parseNumber(process.env.JOB_LINKER_SYNC_MS, 60 * 1000, {
+    integer: true,
+    min: 60 * 1000,
+    max: 60 * 60 * 1000
+  }),
+  jobLinkerOtsEnabled: parseBoolean(
+    process.env.JOB_LINKER_OTS_ENABLED,
+    parseBoolean(process.env.OTS_INTEGRATION_ENABLED, false)
+  ),
   googleCredentialsPath: resolveGoogleCredentialsPath(),
   googleCredentialsJson: googleCredentialsState.json,
   googleCredentialsJsonError: googleCredentialsState.error,
@@ -284,6 +389,7 @@ const env = Object.freeze({
     min: 15000,
     max: 300000
   }),
+  whatsappAutoClearStaleSession: parseBoolean(process.env.WHATSAPP_AUTO_CLEAR_STALE_SESSION, false),
   whatsappSessionPath: resolveWhatsAppSessionPath(),
   // Backward-compatible alias used by existing modules.
   whatsappSessionDir: resolveWhatsAppSessionPath(),
@@ -338,6 +444,13 @@ const env = Object.freeze({
   finalBidAllowedGroups: parseArray(
     process.env.FINAL_BID_ALLOWED_GROUPS || process.env.BID_ALLOWED_GROUPS
   ),
+  finalBidAllowedAreaCodes: parseArray(
+    process.env.FINAL_BID_ALLOWED_AREA_CODES || process.env.ALLOWED_AREA_CODES
+  ),
+  finalBidAreaMatchMode: safeString(
+    process.env.FINAL_BID_AREA_MATCH_MODE || process.env.AREA_CODE_MATCH_MODE,
+    "either"
+  ).toLowerCase(),
   finalBidRequireFare: parseBoolean(process.env.FINAL_BID_REQUIRE_FARE, true),
   finalBidRequireDistance: parseBoolean(process.env.FINAL_BID_REQUIRE_DISTANCE, false),
   calendarEnabled: parseBoolean(process.env.CALENDAR_ENABLED, true),
@@ -347,15 +460,75 @@ const env = Object.freeze({
     min: 10000,
     max: 30 * 60 * 1000
   }),
+  recommendationPollMs: parseNumber(process.env.RECOMMENDATION_POLL_MS, 120000, {
+    integer: true,
+    min: 30000,
+    max: 30 * 60 * 1000
+  }),
   calendarEventDurationMinutes: parseNumber(process.env.CALENDAR_EVENT_DURATION_MINUTES, 60, {
     integer: true,
     min: 5,
     max: 24 * 60
   }),
+  calendarCompanyCode: safeString(process.env.CALENDAR_COMPANY_CODE).toUpperCase(),
   operationsViewRefreshMs: parseNumber(process.env.OPERATIONS_VIEW_REFRESH_MS, 60000, {
     integer: true,
     min: 10000,
     max: 30 * 60 * 1000
+  }),
+  otsIntegrationEnabled: parseBoolean(process.env.OTS_INTEGRATION_ENABLED, false),
+  otsProjectPath: resolveDataPath(
+    process.env.OTS_PROJECT_PATH,
+    path.resolve(PROJECT_ROOT, "../../ridemanagemnet/ride_Managment_Worker")
+  ),
+  otsFormattedRowsPath: resolveDataPath(
+    process.env.OTS_FORMATTED_ROWS_PATH,
+    path.resolve(PROJECT_ROOT, "../../ridemanagemnet/ride_Managment_Worker/output/formatted_rows_latest.json")
+  ),
+  otsRunPipeline: parseBoolean(process.env.OTS_RUN_PIPELINE, true),
+  otsPollMs: parseNumber(process.env.OTS_POLL_MS, 60 * 1000, {
+    integer: true,
+    min: 60 * 1000,
+    max: 24 * 60 * 60 * 1000
+  }),
+  otsGroupName: safeString(process.env.OTS_GROUP_NAME, "OTS"),
+  otsSourceName: safeString(process.env.OTS_SOURCE_NAME, "OTS Supplier Portal"),
+  autoBidEnabled: parseBoolean(process.env.AUTO_BID_ENABLED, false),
+  autoBidMode: safeString(process.env.AUTO_BID_MODE, "safe").toLowerCase(),
+  autoBidPollMs: parseNumber(process.env.AUTO_BID_POLL_MS, 60000, {
+    integer: true,
+    min: 10000,
+    max: 24 * 60 * 60 * 1000
+  }),
+  otsBidSubmitScript: resolveDataPath(
+    process.env.OTS_BID_SUBMIT_SCRIPT,
+    path.resolve(PROJECT_ROOT, "../../ridemanagemnet/ride_Managment_Worker/scripts/submit_bid.js")
+  ),
+  otsBidSubmitTimeoutMs: parseNumber(process.env.OTS_BID_SUBMIT_TIMEOUT_MS, 120000, {
+    integer: true,
+    min: 10000,
+    max: 10 * 60 * 1000
+  }),
+  retentionCleanupEnabled: parseBoolean(process.env.RETENTION_CLEANUP_ENABLED, false),
+  retentionCleanupPollMs: parseNumber(process.env.RETENTION_CLEANUP_POLL_MS, 24 * 60 * 60 * 1000, {
+    integer: true,
+    min: 60 * 1000,
+    max: 7 * 24 * 60 * 60 * 1000
+  }),
+  retentionCompletedDays: parseNumber(process.env.RETENTION_COMPLETED_DAYS, 10, {
+    integer: true,
+    min: 1,
+    max: 3650
+  }),
+  retentionReviewDays: parseNumber(process.env.RETENTION_REVIEW_DAYS, 7, {
+    integer: true,
+    min: 1,
+    max: 3650
+  }),
+  retentionAuditDays: parseNumber(process.env.RETENTION_AUDIT_DAYS, 30, {
+    integer: true,
+    min: 1,
+    max: 3650
   }),
   geocodingProvider: safeString(process.env.GEOCODING_PROVIDER, "nominatim").toLowerCase(),
   geocodingBaseUrl: safeString(process.env.GEOCODING_BASE_URL),

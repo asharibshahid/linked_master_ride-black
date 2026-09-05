@@ -1,4 +1,5 @@
 const { parseBoolean, parseNumber, parseArray } = require("../config/env");
+const { evaluateRideAreaCriteria } = require("../rules/areaCriteria");
 const { safeTrim, collapseWhitespace } = require("../utils/text");
 
 const FINAL_BID_HEADERS = Object.freeze([
@@ -16,10 +17,25 @@ const FINAL_BID_HEADERS = Object.freeze([
   "Reason",
   "Status",
   "Assigned Driver",
+  "Payment Status",
+  "Passenger Count",
   "Calendar Status",
   "Calendar Event ID",
+  "Calendar Created Time",
+  "Calendar Error",
   "Created Time"
 ]);
+
+const PASSENGER_COUNT_PATTERN = /(\d{1,2})\s*(?:persons?|pax|passengers?)\b/i;
+
+function resolvePassengerCount(ride = {}) {
+  const explicit = toCell(ride.passenger_count || ride["Passenger Count"]);
+  if (/^\d+$/.test(explicit)) return explicit;
+
+  const vehicleText = toCell(ride.required_vehicle || ride["Required Vehicle"]);
+  const match = vehicleText.match(PASSENGER_COUNT_PATTERN);
+  return match ? match[1] : "";
+}
 
 const DEFAULT_FINAL_BID_CONFIG = Object.freeze({
   enabled: true,
@@ -30,6 +46,8 @@ const DEFAULT_FINAL_BID_CONFIG = Object.freeze({
   allowedVehicles: [],
   excludedVehicles: [],
   allowedGroups: [],
+  allowedAreaCodes: [],
+  areaMatchMode: "either",
   requireFare: true,
   requireDistance: false
 });
@@ -79,6 +97,8 @@ function resolveFinalBidConfig(config = {}) {
     allowedVehicles: normalizeList(config.allowedVehicles),
     excludedVehicles: normalizeList(config.excludedVehicles),
     allowedGroups: normalizeList(config.allowedGroups),
+    allowedAreaCodes: parseArray(config.allowedAreaCodes),
+    areaMatchMode: toCell(config.areaMatchMode || DEFAULT_FINAL_BID_CONFIG.areaMatchMode),
     requireFare: parseBoolean(config.requireFare, DEFAULT_FINAL_BID_CONFIG.requireFare),
     requireDistance: parseBoolean(
       config.requireDistance,
@@ -129,6 +149,26 @@ function evaluateFinalBidRide(ride = {}, options = {}) {
   } else if (groupName) {
     score += 10;
     reasons.push(`group ${groupName} accepted`);
+  }
+
+  const areaCriteria = evaluateRideAreaCriteria(
+    {
+      Pickup: pickup,
+      "Drop Off": dropOff
+    },
+    {
+      allowedAreaCodes: config.allowedAreaCodes,
+      matchMode: config.areaMatchMode
+    }
+  );
+  if (!areaCriteria.eligible) {
+    failedRules.push("area_not_allowed");
+    reasons.push(
+      `area not allowed (${areaCriteria.mode || "either"}; allowed ${config.allowedAreaCodes.join(", ")})`
+    );
+  } else if (config.allowedAreaCodes.length > 0) {
+    score += 10;
+    reasons.push("area accepted");
   }
 
   if (fare === null) {
@@ -200,8 +240,12 @@ function buildFinalBidSheetRowObject({ ride = {}, evaluation = {}, createdTime =
     Reason: toCell(evaluation.reason),
     Status: "Pending",
     "Assigned Driver": "",
+    "Payment Status": readRideField(ride, "payment_status", "Payment Status"),
+    "Passenger Count": resolvePassengerCount(ride),
     "Calendar Status": "",
     "Calendar Event ID": "",
+    "Calendar Created Time": "",
+    "Calendar Error": "",
     "Created Time": toCell(createdTime) || new Date().toISOString()
   };
 }
@@ -213,18 +257,22 @@ function buildFinalBidSheetRow(record = {}, headers = FINAL_BID_HEADERS) {
 
 function createFinalBidAppender(options = {}) {
   const appendRow = options.appendRow;
-  const logger =
-    options.logger || {
-      info: () => {},
-      warn: () => {},
-      error: () => {}
-    };
+  const logger = {
+    info: typeof options.logger?.info === "function" ? options.logger.info.bind(options.logger) : () => {},
+    warn: typeof options.logger?.warn === "function" ? options.logger.warn.bind(options.logger) : () => {},
+    debug: typeof options.logger?.debug === "function" ? options.logger.debug.bind(options.logger) : () => {},
+    error: typeof options.logger?.error === "function" ? options.logger.error.bind(options.logger) : () => {}
+  };
   const config = resolveFinalBidConfig(options.config || {});
 
   return async function appendFinalBidIfEligible(ride = {}) {
-    const evaluation = evaluateFinalBidRide(ride, { config });
+    const activeConfig =
+      typeof options.configProvider === "function"
+        ? resolveFinalBidConfig(await options.configProvider({ ride, baseConfig: config }))
+        : config;
+    const evaluation = evaluateFinalBidRide(ride, { config: activeConfig });
     if (!evaluation.eligible) {
-      logger.info("Final Bid skipped", {
+      logger.debug("Final Bid skipped", {
         stage: "final_bid",
         fallbackUsed: true,
         refer: readRideField(ride, "refer", "Refer"),

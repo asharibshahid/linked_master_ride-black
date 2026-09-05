@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0f0f0d">
+  <title>ACE Job Linker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/qr.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#master" aria-label="ACE Job Linker">
+        <span class="brand-mark">A</span>
+        <span><strong>ACE</strong><small>Job Linker</small></span>
+      </a>
+      <div class="connection" id="live-status"><span class="status-dot"></span><span>Connecting</span></div>
+      <nav class="nav" aria-label="Primary navigation">
+        <button class="nav-item active" data-tab="master"><span class="nav-code">M</span>Master</button>
+        <button class="nav-item" data-tab="bid"><span class="nav-code">B</span>Bid</button>
+        <button class="nav-item" data-tab="prebook"><span class="nav-code">P</span>PreBook</button>
+        <button class="nav-item" data-tab="groups"><span class="nav-code">G</span>Groups</button>
+        <button class="nav-item" data-tab="linker"><span class="nav-code">L</span>Linker <span class="nav-count" id="link-nav-count">0</span></button>
+        <button class="nav-item" data-tab="settings"><span class="nav-code">S</span>Settings</button>
+      </nav>
+      <div class="sidebar-foot"><span>Operator</span><strong id="operator-name">Operator</strong></div>
+    </aside>
+
+    <main class="workspace">
+      <header class="workspace-head">
+        <div><p class="eyebrow" id="eyebrow">OTS LIVE JOBS</p><h1 id="page-title">Master</h1><p id="page-description">Eligible OTS jobs ready for review.</p></div>
+        <div class="head-actions"><span class="account-state" title="The backend currently supports one OTS worker session">OTS single session</span><button class="button" id="refresh-button" type="button">Refresh</button></div>
+      </header>
+      <div class="notice hidden" id="notice" role="status" aria-live="polite"></div>
+
+      <section class="view active" data-view="master">
+        <div class="source-banner" id="master-source-banner"></div>
+        <div class="stats" id="master-summary"></div>
+        <section class="filter-surface" aria-label="Master filters">
+          <div class="filter-row filter-row-main">
+            <div class="chips" aria-label="Job period"><button class="chip active" data-master-preset="all" type="button">All</button><button class="chip" data-master-preset="upcoming" type="button">Upcoming</button><button class="chip" data-master-preset="future" type="button">Future</button><button class="chip" data-master-preset="highFare" type="button">&pound;100+</button></div>
+            <label class="search-control"><span>Search</span><input id="master-search" type="search" placeholder="Reference, pickup or drop-off"></label>
+          </div>
+          <div class="filter-row">
+            <label><span>From</span><input id="master-date-from" type="date"></label><label><span>To</span><input id="master-date-to" type="date"></label>
+            <div class="quick-dates" aria-label="Quick date filters"><button type="button" data-date-preset="today">Today</button><button type="button" data-date-preset="tomorrow">Tomorrow</button><button type="button" data-date-preset="week">This week</button><button type="button" data-date-preset="month">This month</button><button type="button" data-date-preset="nextMonth">Next month</button></div>
+          </div>
+          <div class="filter-row">
+            <label><span>Mileage</span><select id="master-mileage"><option value="all">All mileage</option><option value="0-9">0-9 mi</option><option value="10-49">10-49 mi</option><option value="50-99">50-99 mi</option><option value="100-199">100-199 mi</option><option value="200+">200+ mi</option></select></label>
+            <label><span>Vehicle</span><select id="master-vehicle"><option value="all">All vehicles</option><option value="saloon">Saloon</option><option value="estate">Estate</option><option value="other">People carrier / MPV</option></select></label>
+            <label><span>Fare</span><select id="master-fare"><option value="all">All fares</option><option value="0-49">Under &pound;50</option><option value="50-99">&pound;50-&pound;99</option><option value="100-149">&pound;100-&pound;149</option><option value="150-199">&pound;150-&pound;199</option><option value="200+">&pound;200+</option></select></label>
+            <label><span>Sort</span><select id="master-sort"><option value="pickupAsc">Pickup date up</option><option value="pickupDesc">Pickup date down</option><option value="newest">Latest added</option><option value="fareDesc">Fare high to low</option></select></label>
+            <button class="button ghost" id="master-clear-filters" type="button">Clear filters</button>
+          </div>
+        </section>
+        <div class="bulk-actions hidden" id="master-bulk"><span id="master-selected-count">0 selected</span><button class="button danger" data-trash-selected="master" type="button">Move to Trash</button></div>
+        <div class="mobile-categories" data-mobile-tabs="master"></div><div class="job-columns" id="master-columns"></div><div class="pager" id="master-pager"></div>
+      </section>
+
+      <section class="view" data-view="bid">
+        <div class="stats" id="bid-summary"></div>
+        <div class="source-banner"><div><strong>Persisted OTS bids</strong><span>Submitted means the provider attempt completed. Only an exact PreBook reference confirms a booking.</span></div><span class="status-pill warn">Manual only</span></div>
+        <div class="bid-grid" id="bid-list"></div>
+        <div class="pager" id="bid-pager"></div>
+      </section>
+
+      <section class="view" data-view="prebook">
+        <div class="source-banner" id="prebook-banner"></div>
+        <div class="list-toolbar"><label class="search-control"><span>Search</span><input id="prebook-search" type="search" placeholder="Reference, pickup or drop-off"></label><label><span>Vehicle</span><select id="prebook-vehicle"><option value="all">All vehicles</option><option value="saloon">Saloon</option><option value="estate">Estate</option><option value="other">People carrier / MPV</option></select></label></div>
+        <div class="bulk-actions hidden" id="prebook-bulk"><span id="prebook-selected-count">0 selected</span><button class="button danger" data-trash-selected="prebook" type="button">Move to Trash</button></div>
+        <div class="mobile-categories" data-mobile-tabs="prebook"></div><div class="job-columns" id="prebook-columns"></div><div class="pager" id="prebook-pager"></div>
+      </section>
+
+      <section class="view" data-view="groups">
+        <div class="source-banner" id="groups-banner"></div>
+        <div class="list-toolbar">
+          <label class="search-control"><span>Search</span><input id="groups-search" type="search" placeholder="Group, reference, pickup or drop-off"></label>
+          <div class="chips" aria-label="WhatsApp vehicle filter"><button class="chip active" data-group-vehicle="all" type="button">All</button><button class="chip" data-group-vehicle="saloon" type="button">Saloon</button><button class="chip" data-group-vehicle="mpv" type="button">MPV</button></div>
+          <label><span>Sort</span><select id="groups-sort"><option value="pickupAsc">Pickup date up</option><option value="pickupDesc">Pickup date down</option><option value="fareDesc">Fare high to low</option></select></label>
+        </div>
+        <div class="bulk-actions hidden" id="groups-bulk"><span id="groups-selected-count">0 selected</span><button class="button danger" data-trash-selected="groups" type="button">Move to Trash</button></div>
+        <div class="mobile-categories" data-mobile-tabs="groups"></div><div class="job-columns" id="groups-columns"></div><div class="pager" id="groups-pager"></div>
+      </section>
+
+      <section class="view" data-view="linker">
+        <div class="linker-overview"><div><span class="section-kicker">REAL RETURN MATCHES</span><strong id="link-count">0 opportunities</strong></div><p id="linker-source-message">PreBook anchors matched to eligible OTS or WhatsApp return work.</p></div>
+        <div class="link-list" id="link-list"></div><div class="pager" id="linker-pager"></div>
+      </section>
+
+      <section class="view" data-view="settings">
+        <div class="settings-layout">
+          <section class="settings-panel">
+            <div class="section-head"><div><span class="section-kicker">SHARED FILTER</span><h2>Matching rules</h2></div></div>
+            <form id="criteria-form" class="form-grid">
+              <label>Minimum fare (&pound;)<input name="minFare" type="number" min="0" step="1"></label><label>Area match<select name="areaMatchMode"><option value="either">Pickup or drop</option><option value="pickup">Pickup only</option><option value="dropoff">Drop only</option><option value="both">Pickup and drop</option></select></label>
+              <label>Vehicle types<textarea name="allowedVehicles" rows="3"></textarea></label><label>Area codes<textarea name="allowedAreaCodes" rows="6"></textarea></label>
+              <label>Maximum link gap (hours)<input name="maxLinkGapHours" type="number" min="1" max="168"></label><label>Turnaround buffer (minutes)<input name="minimumTurnaroundMinutes" type="number" min="0" max="240"></label>
+              <label>Delete after pickup (hours)<input name="expireAfterPickupHours" type="number" min="1" max="72"></label><label>Trash recovery window (hours)<input name="trashRetentionHours" type="number" min="1" max="168"></label>
+              <button class="button primary" type="submit">Save rules</button>
+            </form>
+          </section>
+          <section class="settings-panel">
+            <div class="section-head"><div><span class="section-kicker">LIVE CONNECTIONS</span><h2>Sources</h2></div></div>
+            <div id="source-health" class="health-list"></div>
+            <div class="button-row"><button class="button" id="sync-button" type="button">Sync jobs</button><button class="button" id="whatsapp-status-button" type="button">Check WhatsApp</button><button class="button" id="whatsapp-groups-button" type="button">Load groups</button></div>
+            <div class="service-controls"><strong>WhatsApp service</strong><div class="button-row"><button class="button primary" id="whatsapp-restart-button" type="button">Restart</button><button class="button" id="whatsapp-stop-button" type="button">Stop</button><button class="button danger" id="whatsapp-reset-button" type="button">Reset session</button></div></div>
+            <div id="whatsapp-result" class="inline-result" aria-live="polite"></div>
+            <div id="whatsapp-qr" class="qr-card hidden"><img id="whatsapp-qr-image" alt="WhatsApp login QR code"><div><strong>Scan with WhatsApp</strong><p>Open Linked devices, choose Link a device, and scan this code.</p></div></div>
+          </section>
+          <section class="settings-panel full-width">
+            <div class="section-head"><div><span class="section-kicker">INGESTION ACCESS</span><h2>WhatsApp groups</h2></div><div class="button-row compact"><button class="button" id="groups-select-all" type="button">Select all</button><button class="button" id="groups-clear-all" type="button">Clear</button><button class="button primary" id="groups-save" type="button">Save groups</button></div></div>
+            <div id="whatsapp-group-list" class="group-list"><div class="empty compact">Connect WhatsApp, then load groups.</div></div>
+          </section>
+          <section class="settings-panel full-width"><div class="section-head"><div><span class="section-kicker">24 HOUR RECOVERY</span><h2>Trash</h2></div></div><div id="trash-list" class="trash-list"></div></section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="login-dialog"><form id="login-form"><span class="brand-mark">A</span><h2>Dashboard access</h2><p>Enter the operator credentials for this browser.</p><label>Access token<input id="token-input" type="password" autocomplete="current-password" required></label><label>Operator name<input id="actor-input" type="text" value="Operator" required></label><button class="button primary full-button" type="submit">Connect</button></form></dialog>
+  <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

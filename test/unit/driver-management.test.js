@@ -16,16 +16,18 @@ test("driver and vehicle headers match management sheet schemas", () => {
     "Driver ID",
     "Driver Name",
     "WhatsApp Number",
-    "Vehicle ID",
-    "Current Status",
-    "Location"
+    "Status",
+    "Current Location",
+    "Working Hours",
+    "Vehicle ID"
   ]);
   assert.deepEqual(VEHICLE_HEADERS, [
     "Vehicle ID",
     "Vehicle Type",
     "Seats",
-    "Registration Number",
-    "Driver ID"
+    "Registration",
+    "Driver ID",
+    "Status"
   ]);
 });
 
@@ -42,17 +44,19 @@ test("driver and vehicle records normalize sheet-style rows", () => {
       "Driver ID": "1",
       "Driver Name": "Ali",
       "WhatsApp Number": "+447700900123",
-      "Vehicle ID": "V-01",
-      "Current Status": "Available",
-      Location: "Heathrow"
+      Status: "Available",
+      "Current Location": "Heathrow",
+      "Working Hours": "Any",
+      "Vehicle ID": "V-01"
     }),
     {
       driver_id: "001",
       driver_name: "Ali",
       whatsapp_number: "+447700900123",
-      vehicle_id: "V-01",
       current_status: "Available",
-      location: "Heathrow"
+      location: "Heathrow",
+      working_hours: "Any",
+      vehicle_id: "V-01"
     }
   );
 
@@ -61,15 +65,17 @@ test("driver and vehicle records normalize sheet-style rows", () => {
       "Vehicle ID": "V-01",
       "Vehicle Type": "Saloon",
       Seats: "4",
-      "Registration Number": "AB12 CDE",
-      "Driver ID": "2"
+      Registration: "AB12 CDE",
+      "Driver ID": "2",
+      Status: "Available"
     }),
     {
       vehicle_id: "V-01",
       vehicle_type: "Saloon",
       seats: "4",
-      registration_number: "AB12 CDE",
-      driver_id: "002"
+      registration: "AB12 CDE",
+      driver_id: "002",
+      status: "Available"
     }
   );
 });
@@ -91,9 +97,9 @@ test("available driver filtering and next ID resolution use Drivers rows", async
             data: {
               values: [
                 DRIVER_HEADERS,
-                ["001", "Ali", "+447700900123", "V-01", "Available", "Heathrow"],
-                ["002", "Sara", "+447700900456", "V-02", "Busy", "Gatwick"],
-                ["003", "Omar", "+447700900789", "V-03", "available", "Luton"]
+                ["001", "Ali", "+447700900123", "Available", "Heathrow", "Any", "V-01"],
+                ["002", "Sara", "+447700900456", "Busy", "Gatwick", "Any", "V-02"],
+                ["003", "Omar", "+447700900789", "available", "Luton", "Any", "V-03"]
               ]
             }
           };

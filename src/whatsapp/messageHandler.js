@@ -195,6 +195,13 @@ function determineRoutingDecision({
   if (selectedVehicle?.source === "weak") {
     reasons.push("vehicle_weak");
   }
+  for (const issue of Array.isArray(analysis?.issues) ? analysis.issues : []) {
+    if (safeTrim(issue)) reasons.push(issue);
+  }
+  const confidence = Number(analysis?.confidence);
+  if (Number.isFinite(confidence) && confidence < 0.55) {
+    reasons.push("low_confidence");
+  }
   if (
     safeTrim(ride.pickup) &&
     safeTrim(ride.drop_off) &&
@@ -206,7 +213,8 @@ function determineRoutingDecision({
 
   return {
     target: reasons.length > 0 ? "review" : "rides",
-    reasons: [...new Set(reasons)]
+    reasons: [...new Set(reasons)],
+    confidence: Number.isFinite(confidence) ? confidence : null
   };
 }
 
@@ -357,7 +365,7 @@ async function safeGeocode(geocoder, address, logger, field) {
     const result = await fn(address);
 
     if (result && Number.isFinite(Number(result.lat)) && Number.isFinite(Number(result.lng))) {
-      logger.info("Geocode completed", {
+      logger.debug("Geocode completed", {
         stage: "geocoding",
         field,
         fallbackUsed: false
@@ -410,7 +418,7 @@ async function safeRoute(osrmClient, origin, destination, logger) {
     const result = await fn(origin, destination);
 
     if (result && Number.isFinite(result.distance_meters)) {
-      logger.info("OSRM route completed", {
+      logger.debug("OSRM route completed", {
         stage: "osrm_route",
         fallbackUsed: false,
         reason: result.distance_text || "route_resolved"
@@ -531,9 +539,16 @@ function splitMessageIntoRideBlocks(rawText) {
     () =>
       segmentByMarkerLines(
         normalized,
+        /^(?:mon|monday|tue|tues|tuesday|wed|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday|sun|sunday)\s+\d{1,2}(?::\d{1,2})?\s*(?:am|pm)?\b/i,
+        2
+      ),
+    () =>
+      segmentByMarkerLines(
+        normalized,
         /^(?:today|tomorrow|tonight)\s*@?\s*\d{1,2}(?::\d{1,2})?\s*(?:am|pm)?\b/i,
         2
-      )
+      ),
+    () => segmentByMarkerLines(normalized, /^\d{1,2}:[0-5]\d\s*(?:am|pm)?$/i, 2)
   ];
 
   for (const strategy of strategies) {
@@ -567,7 +582,7 @@ async function safeExtractOcrText(ocrExtractor, message, logger, context = {}) {
       return "";
     }
 
-    logger.info("OCR text extracted from media", {
+    logger.debug("OCR text extracted from media", {
       stage: "ocr",
       fallbackUsed: false
     });
@@ -660,7 +675,7 @@ async function processRideAttempt({
 }) {
   const attemptDedupeKey = createAttemptDedupeKey(dedupe, attempt, message, chatId, receivedAt);
   if (dedupe.hasProcessed(attemptDedupeKey)) {
-    logger.info("Attempt skipped as duplicate", {
+    logger.debug("Attempt skipped as duplicate", {
       stage: "dedupe",
       messageId: attempt.attemptMessageId,
       reason: attempt.sourceKind
@@ -668,7 +683,7 @@ async function processRideAttempt({
     return { skipped: true, reason: "duplicate" };
   }
 
-  logger.info("Processing ride attempt", {
+  logger.debug("Processing ride attempt", {
     stage: "ingest",
     messageId: attempt.attemptMessageId,
     sourceGroup: groupName,
@@ -748,12 +763,13 @@ async function processRideAttempt({
       ? appendReviewRow
       : appendRow;
 
-  logger.info("Final ride row prepared for Google Sheets", {
+  logger.debug("Final ride row prepared for Google Sheets", {
     stage: "sheets_append",
     fallbackUsed: false,
     reason: attempt.sourceKind,
     target: routingDecision.target,
     reviewReasons: routingDecision.reasons,
+    confidence: routingDecision.confidence,
     rowObject: buildSheetRowObject(ride)
   });
 
@@ -808,13 +824,14 @@ async function processRideAttempt({
     processedAt: new Date().toISOString()
   });
 
-  logger.info("Ride attempt processed", {
+  logger.info("Ride processed", {
     stage: "completed",
     messageId: attempt.attemptMessageId,
     refer: ride.refer,
     sourceGroup: ride.group_name,
     target: routingDecision.target,
     reviewReasons: routingDecision.reasons,
+    confidence: routingDecision.confidence,
     rowColumns: buildSheetRow(ride).length
   });
 

@@ -54,6 +54,7 @@ function removeDirectory(dirPath) {
 test("WhatsApp startup resolves when ready event arrives", async () => {
   const tempPath = createTempSessionPath();
   const fakeClient = new FakeWhatsAppClient("ready");
+  let createdClient = null;
 
   try {
     const client = await initializeWhatsAppClient({
@@ -64,17 +65,19 @@ test("WhatsApp startup resolves when ready event arrives", async () => {
       persistedSessionDetected: true,
       logger: createSilentLogger(),
       qrRenderer: () => {},
+      onClientCreated: (client) => { createdClient = client; },
       clientFactory: () => fakeClient
     });
 
     assert.equal(client, fakeClient);
+    assert.equal(createdClient, fakeClient);
     assert.equal(fakeClient.initializeCalled, true);
   } finally {
     removeDirectory(tempPath);
   }
 });
 
-test("WhatsApp startup fails with explicit timeout code when ready does not arrive", async () => {
+test("WhatsApp startup fails with explicit timeout code when stale auto-clear is enabled", async () => {
   const tempPath = createTempSessionPath();
   const fakeClient = new FakeWhatsAppClient("stall");
 
@@ -87,6 +90,7 @@ test("WhatsApp startup fails with explicit timeout code when ready does not arri
           startupTimeoutMs: 120,
           startupTimeoutMinMs: 50,
           persistedSessionDetected: true,
+          autoClearStaleSession: true,
           logger: createSilentLogger(),
           qrRenderer: () => {},
           clientFactory: () => fakeClient
@@ -96,6 +100,85 @@ test("WhatsApp startup fails with explicit timeout code when ready does not arri
         return true;
       }
     );
+  } finally {
+    removeDirectory(tempPath);
+  }
+});
+
+test("WhatsApp startup preserves stalled saved session when stale auto-clear is disabled", async () => {
+  const tempPath = createTempSessionPath();
+  const clientId = "startup-preserve-stalled";
+  const sessionFolderPath = path.join(tempPath, `session-${clientId}`);
+  fs.mkdirSync(sessionFolderPath, { recursive: true });
+  fs.writeFileSync(path.join(sessionFolderPath, "session.txt"), "saved session", "utf8");
+  const fakeClient = new FakeWhatsAppClient("stall");
+  const states = [];
+
+  try {
+    const result = await Promise.race([
+      initializeWhatsAppClient({
+        sessionPath: tempPath,
+        clientId,
+        startupTimeoutMs: 120,
+        startupTimeoutMinMs: 50,
+        persistedSessionDetected: true,
+        autoClearStaleSession: false,
+        logger: createSilentLogger(),
+        qrRenderer: () => {},
+        onStateChange: (state) => {
+          states.push(state);
+        },
+        clientFactory: () => fakeClient
+      }).then(
+        () => "resolved",
+        () => "rejected"
+      ),
+      new Promise((resolve) => setTimeout(() => resolve("waiting"), 180))
+    ]);
+
+    assert.equal(result, "waiting");
+    assert.equal(fakeClient.initializeCalled, true);
+    assert.equal(fakeClient.destroyCalled, false);
+    assert.equal(fs.existsSync(sessionFolderPath), true);
+    assert.ok(states.includes("startup_timeout"));
+  } finally {
+    removeDirectory(tempPath);
+  }
+});
+
+test("WhatsApp startup clears stale persisted session and retries with QR recovery", async () => {
+  const tempPath = createTempSessionPath();
+  const clientId = "startup-stale-retry";
+  const sessionFolderPath = path.join(tempPath, `session-${clientId}`);
+  fs.mkdirSync(sessionFolderPath, { recursive: true });
+  fs.writeFileSync(path.join(sessionFolderPath, "stale.txt"), "old session", "utf8");
+
+  const firstClient = new FakeWhatsAppClient("stall");
+  const secondClient = new FakeWhatsAppClient("qr_then_ready");
+  const clients = [firstClient, secondClient];
+  const states = [];
+
+  try {
+    const client = await initializeWhatsAppClient({
+      sessionPath: tempPath,
+      clientId,
+      startupTimeoutMs: 120,
+      startupTimeoutMinMs: 50,
+      persistedSessionDetected: true,
+      autoClearStaleSession: true,
+      logger: createSilentLogger(),
+      qrRenderer: () => {},
+      onStateChange: (state) => {
+        states.push(state);
+      },
+      clientFactory: () => clients.shift()
+    });
+
+    assert.equal(client, secondClient);
+    assert.equal(firstClient.destroyCalled, true);
+    assert.equal(secondClient.initializeCalled, true);
+    assert.ok(states.includes("qr_required"));
+    assert.ok(states.includes("ready"));
   } finally {
     removeDirectory(tempPath);
   }

@@ -378,7 +378,7 @@ function createAppendRow(options = {}) {
         }
       );
 
-      logger.info("Row appended to Google Sheet", {
+      logger.debug("Row appended to Google Sheet", {
         stage: "sheets_append",
         fallbackUsed: false,
         attempt: lastAttempt,

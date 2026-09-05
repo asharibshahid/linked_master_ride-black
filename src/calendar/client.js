@@ -6,7 +6,7 @@ const { safeTrim } = require("../utils/text");
 
 const CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
 
-function createCalendarClient(options = {}) {
+async function createCalendarClient(options = {}) {
   const logger =
     options.logger ||
     createLogger(env.logLevel || "info", {
@@ -36,15 +36,18 @@ function createCalendarClient(options = {}) {
       scopes: [CALENDAR_SCOPE]
     });
 
+    await auth.authorize();
+
     const calendar = google.calendar({
       version: "v3",
       auth
     });
 
-    logger.info("Google Calendar auth ready", {
+    logger.debug("Google Calendar auth ready", {
       stage: "calendar_auth",
       fallbackUsed: false,
-      reason: safeTrim(options.calendarId || env.googleCalendarId || "primary")
+      reason: safeTrim(options.calendarId || env.googleCalendarId || "primary"),
+      clientEmail: safeTrim(credentialsStatus.clientEmail)
     });
 
     return calendar;
@@ -58,8 +61,9 @@ function createCalendarClient(options = {}) {
     logger.error(summary.summary, {
       stage: "calendar_auth",
       fallbackUsed: true,
-      reason: summary.likelyCause || "Service account credentials were rejected",
-      error
+      reason: summary.likelyCause || "Service account credentials were rejected or the service account was not granted access",
+      error,
+      stack: error?.stack
     });
     return null;
   }

@@ -79,8 +79,10 @@ const VEHICLE_RULES = Object.freeze([
   { pattern: /\bmpv[-\s]?7\b/i, value: "MPV-7" },
   { pattern: /\bmpv[-\s]?\d\b/i, value: "MPV" },
   { pattern: /\bmpv\b/i, value: "MPV" },
-  { pattern: /\b8\s*seater\b/i, value: "8 Seater" },
-  { pattern: /\b6\s*seater\b/i, value: "6 Seater" },
+  { pattern: /\b9[-\s]*seater\b/i, value: "9 Seater" },
+  { pattern: /\b8[-\s]*seater\b/i, value: "8 Seater" },
+  { pattern: /\b7[-\s]*seater\b/i, value: "7 Seater" },
+  { pattern: /\b6[-\s]*seater\b/i, value: "6 Seater" },
   { pattern: /\bv\s*class\b/i, value: "V Class" },
   { pattern: /\bvito\b/i, value: "Vito" },
   { pattern: /\bany\s*[89]\s*\/\s*[89]\s*seater\b/i, value: "8 Seater" },
@@ -92,12 +94,13 @@ const VEHICLE_RULES = Object.freeze([
 ]);
 
 const ROUTE_HINT_PATTERN =
-  /\b(airport|terminal|station|stn|heathrow|gatwick|stansted|luton|lhr|lgw|ltn|euston|paddington|victoria|road|rd|street|st|close|cl|lane|ln|avenue|ave|court|ct|drive|dr|square|sq|park|flat|suite|hotel)\b/i;
+  /\b(airport|terminal|station|stn|heathrow|gatwick|stansted|luton|lhr|lgw|ltn|lcy|sen|bhx|man|brs|sou|boh|ext|cwl|ncl|lba|lpl|ema|edi|gla|abz|euston|paddington|victoria|road|rd|street|st|close|cl|lane|ln|avenue|ave|court|ct|drive|dr|square|sq|park|flat|suite|hotel)\b/i;
 const UK_POSTCODE_PATTERN = /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i;
 const UK_POSTCODE_DISTRICT_PATTERN = /^[A-Z]{1,2}\d[A-Z\d]?$/i;
-const KNOWN_AIRPORT_CODE_PATTERN = /^(?:LHR|LGW|LTN|STN|LCY|SEN)$/i;
+const KNOWN_AIRPORT_CODE_PATTERN =
+  /^(?:LHR|LGW|LTN|STN|LCY|SEN|BHX|MAN|BRS|SOU|BOH|EXT|CWL|NCL|LBA|LPL|EMA|EDI|GLA|ABZ)$/i;
 const DATE_WORD_MONTH_YEAR_PATTERN =
-  /\b(?:(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+)?(\d{1,2})(?:st|nd|rd|th)?[\s-]+([a-z]+)[\s,/-]+(\d{4})\b/i;
+  /\b(?:(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+)?(\d{1,2})(?:st|nd|rd|th)?[\s/-]+([a-z]+)[\s,/-]+(\d{4})\b/i;
 const DATE_NUMERIC_PATTERN =
   /\b(?:(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+)?(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b/i;
 const DATE_DAY_MONTH_PATTERN =
@@ -114,7 +117,7 @@ const ROUTE_SPLIT_PATTERNS = Object.freeze([
   /\bpick(?:\s*|-)?up\b\s*:?\s*(.+?)\s+\b(?:drop(?:\s*|-)?off|drop)\b\s*:?\s*(.+)$/i,
   /^(.+?)\s+\b(?:drop(?:\s*|-)?off|drop)\b\s*:?\s*(.+)$/i,
   /^\s*from\s+(.+?)\s+\bto\b\s+(.+)$/i,
-  /^(.+?)\s*(?:->|=>|[-=]{1,2}>)\s*(.+)$/i,
+  /^(.+?)\s*(?:->|=>|[-=]{1,2}>|\u2192|\u279c|\u279d)\s*(.+)$/i,
   /^(.+?)\s+\bto\b\s+(.+)$/i,
   /^(.+?)\s+-\s+(.+)$/i
 ]);
@@ -123,12 +126,20 @@ const ROUTE_CONTEXT_PREFIX_PATTERN =
 const ROUTE_INLINE_FARE_SUFFIX_PATTERN =
   /\s*=\s*(?:\u00A3|\$|\u20AC)?\s*\d+(?:[.,]\d{1,2})?(?:\s*net(?:\s+amount)?)?(?:\s+(?:same(?:-|\s)day\s+payment|cash|card|account|invoice|paid|prepaid|pending|unpaid))?\s*$/i;
 const STREET_START_PATTERN = /(?:,\s*|\s+)(\d{1,5}[A-Za-z]?\s+(?!terminal\b|term\b)[A-Za-z].*)/i;
-const EXPLICIT_PICKUP_LABEL_PATTERN = /^(?:pick(?:\s*|-)?up(?:\s+location)?|pickup\s+location)\b(?!\s*time)\s*:?\s*(.*)$/i;
-const EXPLICIT_DROP_LABEL_PATTERN = /^\d*\s*(?:drop(?:\s*|-)?off(?:\s+location)?|dropoff(?:\s+location)?)\b\s*:?\s*(.*)$/i;
-const VEHICLE_LABEL_PATTERN = /^(?:vehicle|required\s+vehicle|vehcile\s+type|vehicle\s+type)\b\s*:?\s*(.*)$/i;
+const EXPLICIT_PICKUP_LABEL_PATTERN =
+  /^(?:pick(?:\s*|-)?up(?:\s+location)?|pickup\s+location)\b(?!\s*time)\s*(?::\s*(.*)|$)/i;
+const EXPLICIT_PICKUP_SYNONYM_PATTERN = /^(?:address|from|origin)\b\s*:?\s*(.*)$/i;
+const EXPLICIT_DROP_LABEL_PATTERN =
+  /^\d*\s*(?:drop(?:\s*|-)?off(?:\s+location)?|dropoff(?:\s+location)?|destination)\b\s*(?::\s*(.*)|$)/i;
+const EXPLICIT_DROP_SYNONYM_PATTERN = /^to\b\s*:?\s*(.*)$/i;
+const VEHICLE_LABEL_PATTERN =
+  /^(?:vehicle|required\s+vehicle|vehcile\s+type|vehicle\s+type|car|type|seats)\b\s*:?\s*(.*)$/i;
 const FARE_LABEL_PATTERN = /^(?:best\s+price|net\s+fare|fare|price|cost|net)\b\s*:?\s*(.*)$/i;
 const JOB_REFERENCE_PATTERN =
   /\b(?:job\s*alert|booking|ref(?:erence)?|ace\s*\d[\w-]*|[A-Z]{2,}\d{3,}(?:-\d+)?)\b/i;
+const STANDALONE_REFERENCE_PATTERN = /^([A-Z]{2,}\d{4,}(?:-\d+)?)$/i;
+const EXPLICIT_REFERENCE_LABEL_PATTERN =
+  /^(?:ref(?:erence)?|refer|booking(?:\s*id)?|job(?:\s*id|(?:\s*ref(?:erence)?)?))\b\s*:?\s*([A-Z]{2,}[\w-]*\d[\w-]*)$/i;
 const PASSENGER_PATTERN = /\b\d+\s*(?:persons?|pax|passengers?)\b/i;
 const BAG_PATTERN = /\b\d+\s*bags?\b/i;
 const FLIGHT_SECTION_PATTERN = /^(?:flight|arriving\s+from)\b/i;
@@ -169,7 +180,7 @@ function splitLines(rawMessage) {
 function cleanLineText(line) {
   return collapseWhitespace(
     normalizeCurrencySymbols(line)
-      .replace(/^[^\p{L}\p{N}]+/u, "")
+      .replace(/^[^\p{L}\p{N}\u00A3$\u20AC]+/u, "")
       .replace(/^\d+\.\s*/u, "")
       .replace(/^(?:â€¢|â—|â—¦)+/g, " ")
       .replace(/^[\u2022\u00B7\u25AA\u25E6\u25CF\u25C6\u25BA]+/g, " ")
@@ -496,7 +507,7 @@ function extractResolvedDate(value, context = {}) {
 function stripLocationLabels(text) {
   return safeTrim(
     String(text || "")
-      .replace(/^(?:pick(?:\s*|-)?up|drop(?:\s*|-)?off|dropoff)\b\s*:?\s*/i, "")
+      .replace(/^(?:pick(?:\s*|-)?up|pickup|address|from|origin|drop(?:\s*|-)?off|dropoff|destination|to)\b\s*:?\s*/i, "")
       .replace(/^(?:route|landing)\b\s*:?\s*/i, "")
   );
 }
@@ -605,6 +616,95 @@ function splitRouteByPatterns(value) {
   return splitMergedPickupByAddressBoundary(cleanedText);
 }
 
+function firstCapturedValue(match) {
+  if (!match) return "";
+  return safeTrim(match.slice(1).find((value) => safeTrim(value)) || "");
+}
+
+function createLabelMatch(text, value) {
+  const match = [text, safeTrim(value)];
+  match.input = text;
+  return match;
+}
+
+function matchExplicitPickup(text) {
+  const pickupMatch = text.match(EXPLICIT_PICKUP_LABEL_PATTERN);
+  if (pickupMatch) {
+    return createLabelMatch(text, firstCapturedValue(pickupMatch));
+  }
+
+  const synonymMatch = text.match(EXPLICIT_PICKUP_SYNONYM_PATTERN);
+  if (synonymMatch) {
+    return createLabelMatch(text, firstCapturedValue(synonymMatch));
+  }
+
+  return null;
+}
+
+function matchExplicitDrop(text) {
+  const dropMatch = text.match(EXPLICIT_DROP_LABEL_PATTERN);
+  if (dropMatch) {
+    return createLabelMatch(text, firstCapturedValue(dropMatch));
+  }
+
+  const synonymMatch = text.match(EXPLICIT_DROP_SYNONYM_PATTERN);
+  if (synonymMatch) {
+    return createLabelMatch(text, firstCapturedValue(synonymMatch));
+  }
+
+  return null;
+}
+
+function extractReference(lines) {
+  for (const line of lines) {
+    if (
+      !line?.text ||
+      BLOCKED_LOCATION_SECTIONS.has(line.section) ||
+      line.hasFlightLike ||
+      line.hasPassengerLike
+    ) {
+      continue;
+    }
+
+    const explicitMatch = line.text.match(EXPLICIT_REFERENCE_LABEL_PATTERN);
+    if (explicitMatch) {
+      return {
+        value: safeTrim(explicitMatch[1]).toUpperCase(),
+        lineNumbers: [line.lineNumber],
+        source: "reference_label",
+        confidence: "high"
+      };
+    }
+  }
+
+  for (const line of lines) {
+    if (
+      !line?.text ||
+      BLOCKED_LOCATION_SECTIONS.has(line.section) ||
+      line.hasFlightLike ||
+      line.hasPassengerLike
+    ) {
+      continue;
+    }
+    const standaloneMatch = line.text.match(STANDALONE_REFERENCE_PATTERN);
+    if (!standaloneMatch) continue;
+
+    return {
+      value: safeTrim(standaloneMatch[1]).toUpperCase(),
+      lineNumbers: [line.lineNumber],
+      source: "reference_line",
+      confidence: "high"
+    };
+  }
+
+  return {
+    value: "",
+    lineNumbers: [],
+    source: "",
+    confidence: "none"
+  };
+}
+
 function buildLineRecord(rawLine, index, context = {}, section = "") {
   const raw = String(rawLine || "");
   const text = cleanLineText(raw);
@@ -623,8 +723,8 @@ function buildLineRecord(rawLine, index, context = {}, section = "") {
         /\bnet\b/i.test(text) ||
         INLINE_EQUALS_FARE_PATTERN.test(text)
     });
-  const explicitPickupMatch = text.match(EXPLICIT_PICKUP_LABEL_PATTERN);
-  const explicitDropMatch = text.match(EXPLICIT_DROP_LABEL_PATTERN);
+  const explicitPickupMatch = matchExplicitPickup(text);
+  const explicitDropMatch = matchExplicitDrop(text);
   const explicitVehicleMatch = text.match(VEHICLE_LABEL_PATTERN);
   const routeSplit = splitRouteByPatterns(text);
   const resolvedDate = extractResolvedDate(text, context);
@@ -657,7 +757,7 @@ function buildLineRecord(rawLine, index, context = {}, section = "") {
     hasVehicleLike: Boolean(vehicleValue || explicitVehicleMatch),
     hasDateLike: Boolean(hasResolvedDate || hasRelativeOrWeekdayToken),
     hasTimeLike: Boolean(timeValue || TIME_MERIDIEM_PATTERN.test(text) || TIME_24H_PATTERN.test(text)),
-    hasRouteLike: Boolean(routeSplit || /\bfrom\b/i.test(text) || /\bto\b/i.test(text) || /->|=>/.test(text)),
+    hasRouteLike: Boolean(routeSplit || /\bfrom\b/i.test(text) || /\bto\b/i.test(text) || /->|=>|\u2192|\u279c|\u279d/.test(text)),
     hasLocationLike: isLocationCandidateValue(text)
   };
 }
@@ -1149,6 +1249,7 @@ function analyzeRideMessage(rawMessage, context = {}) {
   const vehicle = extractVehicle(lines);
   const route = extractRoute(lines);
   const fare = extractFare(lines);
+  const reference = extractReference(lines);
   const paymentStatus = extractPaymentStatus(raw);
 
   output.pickup_day_date = schedule.pickup_day_date;
@@ -1159,12 +1260,14 @@ function analyzeRideMessage(rawMessage, context = {}) {
   output.fare = fare.value;
   output.payment_status = paymentStatus;
 
-  output.refer = generateRefer({
-    messageId: context.message_id || context.messageId,
-    rawMessage: raw,
-    groupId: output.group_name,
-    timestamp: context.received_at || context.receivedAt || context.timestamp || Date.now()
-  });
+  output.refer =
+    reference.value ||
+    generateRefer({
+      messageId: context.message_id || context.messageId,
+      rawMessage: raw,
+      groupId: output.group_name,
+      timestamp: context.received_at || context.receivedAt || context.timestamp || Date.now()
+    });
 
   const issues = [];
   if ((schedule.hadDateLikeText && !schedule.dateResolved) || (schedule.hadTimeLikeText && !schedule.timeResolved)) {
@@ -1197,6 +1300,13 @@ function analyzeRideMessage(rawMessage, context = {}) {
       lineNumbers: fare.lineNumbers,
       source: fare.source,
       confidence: fare.confidence,
+      contaminated: false
+    },
+    refer: {
+      value: reference.value,
+      lineNumbers: reference.lineNumbers,
+      source: reference.source,
+      confidence: reference.confidence,
       contaminated: false
     },
     payment_status: {
@@ -1234,12 +1344,12 @@ function extractLocalRideFields(rawMessage, context = {}) {
 }
 
 function createLocalExtractor({ logger } = {}) {
-  const safeLogger = logger || { info: () => {} };
+  const safeLogger = logger || { info: () => {}, debug: () => {} };
 
   return {
     extract(rawMessage, context = {}) {
       const { record } = analyzeRideMessage(rawMessage, context);
-      safeLogger.info("Local extraction completed", {
+      safeLogger.debug("Local extraction completed", {
         stage: "local_extraction",
         reason: record.refer
       });
@@ -1247,7 +1357,7 @@ function createLocalExtractor({ logger } = {}) {
     },
     extractWithAnalysis(rawMessage, context = {}) {
       const result = analyzeRideMessage(rawMessage, context);
-      safeLogger.info("Local extraction completed", {
+      safeLogger.debug("Local extraction completed", {
         stage: "local_extraction",
         reason: result.record.refer
       });

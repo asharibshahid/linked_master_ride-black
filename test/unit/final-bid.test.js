@@ -83,6 +83,42 @@ test("evaluateFinalBidRide rejects rides that do not match configured bid rules"
   assert.ok(excludedVehicle.failedRules.includes("vehicle_excluded"));
 });
 
+test("evaluateFinalBidRide applies allowed area code criteria before downstream workflows", () => {
+  const accepted = evaluateFinalBidRide(
+    {
+      ...ELIGIBLE_RIDE,
+      pickup: "Heathrow Terminal 5",
+      drop_off: "Chelsea SW3 1AA"
+    },
+    {
+      config: {
+        minFare: 80,
+        allowedAreaCodes: ["LHR"],
+        areaMatchMode: "pickup"
+      }
+    }
+  );
+  const rejected = evaluateFinalBidRide(
+    {
+      ...ELIGIBLE_RIDE,
+      pickup: "Manchester Airport",
+      drop_off: "Liverpool L1 1AA"
+    },
+    {
+      config: {
+        minFare: 80,
+        allowedAreaCodes: ["LHR", "SW3"],
+        areaMatchMode: "either"
+      }
+    }
+  );
+
+  assert.equal(accepted.eligible, true);
+  assert.match(accepted.reason, /area accepted/);
+  assert.equal(rejected.eligible, false);
+  assert.ok(rejected.failedRules.includes("area_not_allowed"));
+});
+
 test("buildFinalBidSheetRowObject maps eligible ride into Final Bid schema with Pending status", () => {
   const evaluation = evaluateFinalBidRide(ELIGIBLE_RIDE, {
     config: {
@@ -101,7 +137,9 @@ test("buildFinalBidSheetRowObject maps eligible ride into Final Bid schema with 
   assert.equal(rowObject["Calendar Status"], "");
   assert.equal(rowObject["Calendar Event ID"], "");
   assert.equal(rowObject["Created Time"], "2026-07-18T12:00:00.000Z");
-  assert.equal(row.length, 17);
+  assert.equal(rowObject["Calendar Created Time"], "");
+  assert.equal(rowObject["Calendar Error"], "");
+  assert.equal(row.length, FINAL_BID_HEADERS.length);
   assert.equal(row[0], "RID-20260718-AB12");
   assert.equal(row[10], String(evaluation.score));
   assert.equal(row[12], "Pending");
@@ -137,4 +175,41 @@ test("createFinalBidAppender appends matching rides and skips non-matching rides
   assert.equal(appendCalls[0].Status, "Pending");
   assert.ok(entries.some((entry) => entry.message === "Final Bid appended"));
   assert.ok(entries.some((entry) => entry.message === "Final Bid skipped"));
+});
+
+test("createFinalBidAppender can use dynamic criteria provider", async () => {
+  const appendCalls = [];
+  const appendFinalBidIfEligible = createFinalBidAppender({
+    appendRow: async (payload) => {
+      appendCalls.push(payload);
+      return { updatedRange: "Final Bid!A2", updatedRows: 1 };
+    },
+    config: {
+      minFare: 80
+    },
+    configProvider: async () => ({
+      minFare: 200,
+      allowedAreaCodes: ["LHR"],
+      areaMatchMode: "pickup"
+    })
+  });
+
+  const skipped = await appendFinalBidIfEligible({
+    ...ELIGIBLE_RIDE,
+    refer: "RID-DYN-LOW",
+    pickup: "Heathrow Terminal 5",
+    fare: "145"
+  });
+  const appended = await appendFinalBidIfEligible({
+    ...ELIGIBLE_RIDE,
+    refer: "RID-DYN-HIGH",
+    pickup: "Heathrow Terminal 5",
+    fare: "220"
+  });
+
+  assert.equal(skipped.appended, false);
+  assert.ok(skipped.evaluation.failedRules.includes("fare_below_minimum"));
+  assert.equal(appended.appended, true);
+  assert.equal(appendCalls.length, 1);
+  assert.equal(appendCalls[0].Refer, "RID-DYN-HIGH");
 });

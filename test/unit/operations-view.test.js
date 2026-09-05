@@ -90,6 +90,36 @@ test("Operations View uses Pending as default status and skips blank ride IDs", 
   assert.equal(rows[0][5], "Pending");
 });
 
+test("Operations View sorts rows by pickup date and starting time", () => {
+  const rows = buildOperationsRows([
+    createFinalBidRecord({
+      Refer: "RID-3",
+      "Pickup Day & Date": "5 August 2026",
+      "Starting Timing": "12:00"
+    }),
+    createFinalBidRecord({
+      Refer: "RID-1",
+      "Pickup Day & Date": "4 August 2026",
+      "Starting Timing": "12:00"
+    }),
+    createFinalBidRecord({
+      Refer: "RID-BAD",
+      "Pickup Day & Date": "unknown",
+      "Starting Timing": "09:00"
+    }),
+    createFinalBidRecord({
+      Refer: "RID-2",
+      "Pickup Day & Date": "Tuesday 4th August 2026",
+      "Starting Timing": "08:00"
+    })
+  ]);
+
+  assert.deepEqual(
+    rows.map((row) => row[0]),
+    ["RID-2", "RID-1", "RID-3", "RID-BAD"]
+  );
+});
+
 test("refreshOperationsView clears and writes derived rows", async () => {
   const calls = [];
   const sheetsClient = {
@@ -106,7 +136,23 @@ test("refreshOperationsView clears and writes derived rows", async () => {
 
           return {
             data: {
-              values: [FINAL_BID_HEADERS, recordToRow(createFinalBidRecord())]
+              values: [
+                FINAL_BID_HEADERS,
+                recordToRow(
+                  createFinalBidRecord({
+                    Refer: "RID-2",
+                    "Pickup Day & Date": "5 August 2026",
+                    "Starting Timing": "12:00"
+                  })
+                ),
+                recordToRow(
+                  createFinalBidRecord({
+                    Refer: "RID-1",
+                    "Pickup Day & Date": "4 August 2026",
+                    "Starting Timing": "08:00"
+                  })
+                )
+              ]
             }
           };
         },
@@ -130,7 +176,7 @@ test("refreshOperationsView clears and writes derived rows", async () => {
     logger: createSilentLogger()
   });
 
-  assert.equal(result.rowsWritten, 1);
+  assert.equal(result.rowsWritten, 2);
   assert.equal(calls[0].type, "clear");
   assert.equal(calls[0].request.range, "'Operations View'!A2:I");
   assert.equal(calls[1].type, "update");
@@ -138,8 +184,8 @@ test("refreshOperationsView clears and writes derived rows", async () => {
   assert.deepEqual(calls[1].request.requestBody.values[0], [
     "RID-1",
     "Heathrow -> SW1A 1AA",
-    "Friday 13th March 2026",
-    "6:25 am",
+    "4 August 2026",
+    "08:00",
     "145",
     "Approved",
     "001",

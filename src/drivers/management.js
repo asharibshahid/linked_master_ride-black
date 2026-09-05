@@ -5,17 +5,19 @@ const DRIVER_HEADERS = Object.freeze([
   "Driver ID",
   "Driver Name",
   "WhatsApp Number",
-  "Vehicle ID",
-  "Current Status",
-  "Location"
+  "Status",
+  "Current Location",
+  "Working Hours",
+  "Vehicle ID"
 ]);
 
 const VEHICLE_HEADERS = Object.freeze([
   "Vehicle ID",
   "Vehicle Type",
   "Seats",
-  "Registration Number",
-  "Driver ID"
+  "Registration",
+  "Driver ID",
+  "Status"
 ]);
 
 function toCell(value) {
@@ -54,9 +56,10 @@ function normalizeDriverRecord(record = {}) {
     driver_id: formatDriverId(record.driver_id || record["Driver ID"]),
     driver_name: toCell(record.driver_name || record["Driver Name"]),
     whatsapp_number: toCell(record.whatsapp_number || record["WhatsApp Number"]),
-    vehicle_id: toCell(record.vehicle_id || record["Vehicle ID"]),
-    current_status: toCell(record.current_status || record["Current Status"]),
-    location: toCell(record.location || record.Location)
+    current_status: toCell(record.current_status || record.status || record.Status || record["Current Status"]),
+    location: toCell(record.location || record["Current Location"] || record.Location),
+    working_hours: toCell(record.working_hours || record["Working Hours"]),
+    vehicle_id: toCell(record.vehicle_id || record["Vehicle ID"])
   };
 }
 
@@ -65,8 +68,9 @@ function normalizeVehicleRecord(record = {}) {
     vehicle_id: toCell(record.vehicle_id || record["Vehicle ID"]),
     vehicle_type: toCell(record.vehicle_type || record["Vehicle Type"]),
     seats: toCell(record.seats || record.Seats),
-    registration_number: toCell(record.registration_number || record["Registration Number"]),
-    driver_id: formatDriverId(record.driver_id || record["Driver ID"])
+    registration: toCell(record.registration || record.Registration || record["Registration Number"]),
+    driver_id: formatDriverId(record.driver_id || record["Driver ID"]),
+    status: toCell(record.status || record.Status || record.availability || record.Availability)
   };
 }
 

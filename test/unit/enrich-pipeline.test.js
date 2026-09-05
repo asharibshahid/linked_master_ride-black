@@ -125,10 +125,10 @@ test("enrich pipeline geocodes after normalization, runs OSRM only with both coo
   assert.equal(appendRideCalls[0].source_time, expectedSourceTime);
 
   const geocodeSuccessLogs = entries.filter(
-    (entry) => entry.message === "Geocode completed" && entry.level === "info"
+    (entry) => entry.message === "Geocode completed" && entry.level === "debug"
   );
   const osrmSuccessLogs = entries.filter(
-    (entry) => entry.message === "OSRM route completed" && entry.level === "info"
+    (entry) => entry.message === "OSRM route completed" && entry.level === "debug"
   );
 
   assert.equal(geocodeSuccessLogs.length, 2);
@@ -406,7 +406,7 @@ test("pipeline skips Upcoming Jobs >79 for low-fare rides but still appends to R
 
   assert.equal(appendRideCalls.length, 1);
   assert.equal(appendUpcomingCalls.length, 0);
-  assert.ok(entries.some((entry) => entry.message === "Upcoming job skipped because fare <= 79"));
+  assert.equal(entries.some((entry) => entry.message === "Upcoming job skipped because fare <= 79"), false);
 });
 
 test("pipeline appends eligible clean rides to Final Bid after Rides", async () => {

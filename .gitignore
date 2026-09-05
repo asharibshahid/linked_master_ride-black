@@ -10,3 +10,6 @@ data/.wwebjs_cache/
 .wwebjs_cache/
 node_modules/
 npm-debug.log*
+.tmp/
+.vercel/
+refrence/

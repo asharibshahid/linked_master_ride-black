@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createLocalExtractor } = require("../../src/extraction/localExtractor");
+const { buildMessageAttempts } = require("../../src/whatsapp/messageHandler");
 const {
   createOpenAiNormalizer,
   CANONICAL_SCHEMA_TARGET,
@@ -41,6 +42,30 @@ New York
 \u2022 Meet & Greet
 
 \u00A3145`;
+
+async function extractRidesFromMessage(message, messageId = "MULTI-FORMAT") {
+  const logger = createSilentLogger();
+  const extractor = createLocalExtractor({ logger });
+  const attempts = await buildMessageAttempts({
+    message: { hasMedia: false },
+    messageId,
+    normalizedBody: message,
+    ocrExtractor: null,
+    logger
+  });
+
+  return {
+    attempts,
+    rides: attempts.map((attempt) =>
+      extractor.extract(attempt.rawText, {
+        group_name: "Dispatch Group",
+        source_name: "447700900123",
+        message_id: attempt.attemptMessageId,
+        received_at: "2026-07-28T09:00:00.000Z"
+      })
+    )
+  };
+}
 
 const SHORT_CARD_CASES = [
   {
@@ -577,4 +602,162 @@ test("local extractor captures standalone fare line and known vehicle from ACE r
   assert.equal(extracted.required_vehicle, "Saloon Car");
   assert.equal(extracted.fare, "145");
   assert.equal(extracted.payment_status, "");
+});
+
+test("local extractor supports multi-company WhatsApp ride formats", async () => {
+  const cases = [
+    {
+      name: "Taxi Services labeled card",
+      message: `Taxi Services
+
+\u2B50 1 x 6 Seater
+Date: 28/Jul/2026
+Pick-Up Time: 04:30
+Address: Ch Ln, Danefield Ct, Bearsted, Maidstone ME14 4EF, UK
+Destination: Terminal 5
+CWI873104914
+\u00A390 Same Day Payment`,
+      expected: [
+        {
+          pickup: "Ch Ln, Danefield Ct, Bearsted, Maidstone ME14 4EF, UK",
+          drop_off: "Terminal 5",
+          fare: "90",
+          required_vehicle: "6 Seater",
+          refer: "CWI873104914"
+        }
+      ]
+    },
+    {
+      name: "Pickup Cars net fare card",
+      message: `Pickup Cars Ltd
+
+Today at 10:55 AM
+
+Pickup: LHR
+Drop Off: LE16 7EF
+
+Vehicle: 9 Seater
+
+Net Fare: \u00A3175
+
+Same Day Payment`,
+      expected: [
+        {
+          pickup: "LHR",
+          drop_off: "LE16 7EF",
+          fare: "175",
+          required_vehicle: "9 Seater"
+        }
+      ]
+    },
+    {
+      name: "Minicabees two ride message",
+      message: `Minicabees
+
+Tomorrow @ 11:10 AM
+
+Pickup: KT100BJ
+Dropoff: SL5
+Vehicle: MPV
+Fare: \u00A360
+
+
+Tomorrow @ 13:50 PM
+Pickup: Heathrow Terminal 5
+Dropoff: RH19 2PX
+Vehicle: 8-Seater
+Fare: \u00A385`,
+      expected: [
+        {
+          pickup: "KT100BJ",
+          drop_off: "SL5",
+          fare: "60",
+          required_vehicle: "MPV"
+        },
+        {
+          pickup: "Heathrow Terminal 5",
+          drop_off: "RH19 2PX",
+          fare: "85",
+          required_vehicle: "8 Seater"
+        }
+      ]
+    },
+    {
+      name: "Taxi More standalone vehicle",
+      message: `Taxi More Ltd
+
+MPV8
+
+Sunday 15:55
+Pickup: Gatwick
+Dropoff: RG30 4XL
+
+Price: \u00A3120 Net`,
+      expected: [
+        {
+          pickup: "Gatwick",
+          drop_off: "RG30 4XL",
+          fare: "120",
+          required_vehicle: "MPV-8"
+        }
+      ]
+    },
+    {
+      name: "Kurv arrow route time blocks",
+      message: `Kurv London Limited
+
+Tomorrow Jobs
+
+08:00
+CM22 6QS \u2192 WD17 1PA
+\u00A395
+8-Seater
+
+
+10:15
+LHR \u2192 WC2N 5HX
+\u00A375 Net
+8-Seater`,
+      expected: [
+        {
+          pickup: "CM22 6QS",
+          drop_off: "WD17 1PA",
+          fare: "95",
+          required_vehicle: "8 Seater"
+        },
+        {
+          pickup: "LHR",
+          drop_off: "WC2N 5HX",
+          fare: "75",
+          required_vehicle: "8 Seater"
+        }
+      ]
+    }
+  ];
+
+  for (const exampleCase of cases) {
+    const { attempts, rides } = await extractRidesFromMessage(
+      exampleCase.message,
+      `FORMAT-${exampleCase.name}`
+    );
+
+    assert.equal(
+      attempts.length,
+      exampleCase.expected.length,
+      `${exampleCase.name}: expected ride count`
+    );
+
+    for (let index = 0; index < exampleCase.expected.length; index += 1) {
+      const expectedRide = exampleCase.expected[index];
+      const extracted = rides[index];
+
+      for (const [field, expectedValue] of Object.entries(expectedRide)) {
+        assert.equal(
+          extracted[field],
+          expectedValue,
+          `${exampleCase.name} ride ${index + 1}: expected ${field}=${expectedValue} but received ${extracted[field]}`
+        );
+      }
+    }
+  }
 });

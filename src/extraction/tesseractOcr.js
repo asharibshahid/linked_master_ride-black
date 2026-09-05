@@ -128,7 +128,7 @@ function createTesseractOcr(options = {}) {
     });
 
     const text = normalizeText(result.stdout || "");
-    logger.info("OCR extraction completed", {
+    logger.debug("OCR extraction completed", {
       stage: "ocr",
       fallbackUsed: false,
       reason: absoluteFilePath,

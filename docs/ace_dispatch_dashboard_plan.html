@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ACE Taxi Dispatch Dashboard - Production Plan</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: #101828;
+      background: #ffffff;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .page {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    .cover {
+      padding: 24px 0 20px;
+      border-bottom: 3px solid #1f2a44;
+      margin-bottom: 24px;
+    }
+
+    .brand {
+      color: #1f2a44;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 14px 0 8px;
+      font-size: 30px;
+      line-height: 1.15;
+      color: #111827;
+    }
+
+    .subtitle {
+      color: #475467;
+      font-size: 14px;
+      max-width: 760px;
+    }
+
+    h2 {
+      margin: 24px 0 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #d0d5dd;
+      font-size: 18px;
+      color: #1f2a44;
+    }
+
+    h3 {
+      margin: 16px 0 6px;
+      font-size: 14px;
+      color: #111827;
+    }
+
+    p {
+      margin: 6px 0 10px;
+    }
+
+    ul {
+      margin: 8px 0 14px 20px;
+      padding: 0;
+    }
+
+    li {
+      margin: 4px 0;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin: 12px 0;
+    }
+
+    .card {
+      border: 1px solid #d0d5dd;
+      border-radius: 6px;
+      padding: 12px;
+      background: #f9fafb;
+    }
+
+    .card strong {
+      display: block;
+      margin-bottom: 4px;
+      color: #1f2a44;
+    }
+
+    .flow {
+      margin: 12px 0;
+      padding: 12px;
+      border: 1px solid #d0d5dd;
+      border-radius: 6px;
+      background: #f8fbff;
+      font-family: Consolas, "Courier New", monospace;
+      white-space: pre-wrap;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0 18px;
+      page-break-inside: avoid;
+    }
+
+    th, td {
+      border: 1px solid #d0d5dd;
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #1f2a44;
+      color: #ffffff;
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+
+    .note {
+      border-left: 4px solid #2563eb;
+      padding: 8px 12px;
+      background: #eff6ff;
+      margin: 12px 0;
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 10px;
+      background: #e0e7ff;
+      color: #1e3a8a;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .footer {
+      margin-top: 28px;
+      padding-top: 10px;
+      border-top: 1px solid #d0d5dd;
+      color: #667085;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="cover">
+      <div class="brand">ACE Taxi Dispatch</div>
+      <h1>Unified Production Dashboard Plan</h1>
+      <p class="subtitle">
+        A production plan for combining WhatsApp ride ingestion and OTS supplier portal automation into one central dispatch dashboard with driver recommendations, linked ride intelligence, auto cleanup, calendar monitoring, and future auto bidding.
+      </p>
+    </section>
+
+    <h2>1. Executive Summary</h2>
+    <p>
+      The goal is to create one professional dispatch control panel where rides from WhatsApp groups and the OTS supplier portal are normalized into a single operational workflow. Operators will be able to see live rides, review incomplete jobs, approve driver recommendations, monitor schedules, track linked ride opportunities, and view calendar status from one dashboard.
+    </p>
+
+    <div class="flow">WhatsApp Groups + OTS Supplier Portal
+        -> Unified Ride Pipeline
+        -> Central Database
+        -> Operations Dashboard
+        -> Recommendation + Assignment
+        -> Driver/Vehicle Schedules
+        -> Calendar + Reports</div>
+
+    <h2>2. Current Systems To Combine</h2>
+    <div class="grid">
+      <div class="card">
+        <strong>WhatsApp Dispatch System</strong>
+        Extracts rides from WhatsApp groups, routes them to Rides, Needs Review, Upcoming Jobs, Final Bid, Driver Recommendations, Schedules, Linked Rides, and Calendar workflow.
+      </div>
+      <div class="card">
+        <strong>OTS Worker System</strong>
+        Scrapes ride cards from the OTS supplier portal, dedupes references, enriches routes with geocoding/OSRM, formats rows, appends to Master sheet, and archives expired jobs.
+      </div>
+    </div>
+
+    <h2>3. Unified Data Model</h2>
+    <p>
+      Both sources should feed one central schema so that the dashboard does not care whether the ride came from WhatsApp, OTS, or manual entry.
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Entity</th>
+          <th>Purpose</th>
+          <th>Important Fields</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>rides</td>
+          <td>Main ride record from all sources.</td>
+          <td>ride_id, source, pickup_date, pickup_time, pickup, drop_off, fare, vehicle_required, status</td>
+        </tr>
+        <tr>
+          <td>drivers</td>
+          <td>Driver profile and availability.</td>
+          <td>driver_id, name, phone, status, current_location, working_hours</td>
+        </tr>
+        <tr>
+          <td>vehicles</td>
+          <td>Independent vehicle resource.</td>
+          <td>vehicle_id, type, seats, registration, status</td>
+        </tr>
+        <tr>
+          <td>recommendations</td>
+          <td>AI/logic based dispatch suggestions.</td>
+          <td>ride_id, driver_id, vehicle_id, score, reason, status</td>
+        </tr>
+        <tr>
+          <td>driver_schedule</td>
+          <td>Driver timeline and availability.</td>
+          <td>driver_id, ride_id, start_time, end_time, next_available_time, current_location</td>
+        </tr>
+        <tr>
+          <td>vehicle_schedule</td>
+          <td>Vehicle booking protection.</td>
+          <td>vehicle_id, ride_id, driver_id, start_time, end_time, status</td>
+        </tr>
+        <tr>
+          <td>linked_rides</td>
+          <td>Return ride and chaining opportunities.</td>
+          <td>first_ride_id, second_ride_id, driver_id, vehicle_id, time_gap, saving_estimate</td>
+        </tr>
+        <tr>
+          <td>calendar_events</td>
+          <td>Calendar creation tracking.</td>
+          <td>ride_id, event_id, status, error_reason</td>
+        </tr>
+        <tr>
+          <td>archived_rides</td>
+          <td>Old completed ride history.</td>
+          <td>ride data snapshot, archived_at, archive_reason</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>4. Data Cleanup And Retention</h2>
+    <p>
+      The database should stay fast and clean. Old trash should not remain in active operational tables, but future rides must be protected.
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Ride Type</th>
+          <th>Retention Rule</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Future rides</td>
+          <td>Keep until ride date passes, even if the ride is 40+ days ahead.</td>
+          <td>Stay active</td>
+        </tr>
+        <tr>
+          <td>Assigned future rides</td>
+          <td>Keep active until completed or cancelled.</td>
+          <td>Stay active</td>
+        </tr>
+        <tr>
+          <td>Completed rides</td>
+          <td>Keep active for 10 days after completion.</td>
+          <td>Archive after 10 days</td>
+        </tr>
+        <tr>
+          <td>Cancelled, failed, duplicate, invalid rides</td>
+          <td>Keep briefly for audit.</td>
+          <td>Delete or archive after 3-5 days</td>
+        </tr>
+        <tr>
+          <td>Needs Review unresolved</td>
+          <td>Keep for operator review.</td>
+          <td>Archive after 7-10 days if unresolved</td>
+        </tr>
+        <tr>
+          <td>Expired linked opportunities</td>
+          <td>Close when timing is no longer valid.</td>
+          <td>Mark Expired</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note">
+      A daily cleanup worker should run automatically, for example at 2 AM. It should archive old completed rides, delete trash, expire old linked opportunities, and trim old logs.
+    </div>
+
+    <h2>5. Linked Ride Intelligence</h2>
+    <p>
+      Every new ride should be compared against upcoming and assigned rides to find return ride opportunities. This helps reduce empty mileage and improve driver productivity.
+    </p>
+
+    <h3>Matching Criteria</h3>
+    <ul>
+      <li>Previous ride drop location is close to the next ride pickup location.</li>
+      <li>Vehicle category is compatible.</li>
+      <li>Time gap is realistic for the driver to complete both rides.</li>
+      <li>Driver and vehicle are both available.</li>
+      <li>Rest/fatigue rules are respected.</li>
+      <li>Airport codes, postcodes, cities, and zones are normalized before matching.</li>
+    </ul>
+
+    <h3>Search Window</h3>
+    <ul>
+      <li>Same day rides should get highest priority.</li>
+      <li>Next 24 hours and next 3 days should be searched for near matches.</li>
+      <li>Long future rides, such as a ride 40 days ahead, should remain searchable for linked opportunities around that ride date.</li>
+      <li>If no exact match exists, the system should still show best-effort suggestions with lower confidence.</li>
+    </ul>
+
+    <h2>6. Dashboard Screens</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Screen</th>
+          <th>Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Dashboard</td>
+          <td>Today jobs, upcoming jobs, pending approvals, assignments, calendar failures, linked opportunities, revenue.</td>
+        </tr>
+        <tr>
+          <td>Live Rides</td>
+          <td>All incoming rides from WhatsApp and OTS with source filters.</td>
+        </tr>
+        <tr>
+          <td>Needs Review</td>
+          <td>Incomplete or low-confidence rides requiring operator correction.</td>
+        </tr>
+        <tr>
+          <td>Final Bid</td>
+          <td>Qualified rides ready for dispatch decision.</td>
+        </tr>
+        <tr>
+          <td>Driver Recommendations</td>
+          <td>Recommended driver/vehicle with score and reason. Operator approves here.</td>
+        </tr>
+        <tr>
+          <td>Linked Rides</td>
+          <td>Return ride opportunities, chaining score, saving estimate, and approval status.</td>
+        </tr>
+        <tr>
+          <td>Drivers</td>
+          <td>Driver status, current location, working hours, schedule, availability.</td>
+        </tr>
+        <tr>
+          <td>Vehicles</td>
+          <td>Vehicle type, seats, registration, current booking status.</td>
+        </tr>
+        <tr>
+          <td>Schedules</td>
+          <td>Driver and vehicle timeline views.</td>
+        </tr>
+        <tr>
+          <td>Calendar Monitor</td>
+          <td>Calendar created, failed, retry needed, and failure reason.</td>
+        </tr>
+        <tr>
+          <td>Reports</td>
+          <td>Completed jobs, revenue, driver utilization, linked ride savings.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>7. Operator Workflow</h2>
+    <div class="flow">1. New ride arrives from WhatsApp or OTS
+2. System normalizes ride into central database
+3. System routes ride to Live Rides, Needs Review, or Final Bid
+4. Recommendation engine selects best driver and vehicle
+5. Operator approves recommendation on dashboard
+6. Assignment is created
+7. Driver and vehicle schedule update automatically
+8. Linked ride opportunities are shown
+9. Calendar event is created or failure reason is shown
+10. Old data is archived or deleted by cleanup worker</div>
+
+    <h2>8. Future Add-On: Auto Bidding</h2>
+    <p>
+      A future production add-on can automatically bid on rides when the system criteria match. This should not replace operator control at first; it should start as an assisted mode and then move to full automation once confidence is proven.
+    </p>
+
+    <h3>Auto Bidding Criteria</h3>
+    <ul>
+      <li>Fare is above configured minimum.</li>
+      <li>Pickup/dropoff locations are within service area.</li>
+      <li>Required vehicle type is available.</li>
+      <li>Driver and vehicle schedule have no conflicts.</li>
+      <li>Linked ride opportunity exists or pickup distance is acceptable.</li>
+      <li>Rest/fatigue rules are satisfied.</li>
+      <li>Route profitability score meets threshold.</li>
+    </ul>
+
+    <h3>Auto Bidding Dashboard Behavior</h3>
+    <ul>
+      <li>System detects a matching ride from OTS or WhatsApp.</li>
+      <li>System calculates dispatch score and bid score.</li>
+      <li>If criteria match, system prepares or places the bid automatically depending on mode.</li>
+      <li>Dashboard shows the bid as <span class="tag">Auto Bid Suggested</span>, <span class="tag">Auto Bid Placed</span>, or <span class="tag">Manual Approval Needed</span>.</li>
+      <li>Operator can approve, reject, or override.</li>
+      <li>All auto bidding decisions are stored in audit logs.</li>
+    </ul>
+
+    <h3>Recommended Rollout</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Mode</th>
+          <th>Description</th>
+          <th>Risk Level</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Suggest Only</td>
+          <td>System shows that it would bid, but operator clicks approve.</td>
+          <td>Low</td>
+        </tr>
+        <tr>
+          <td>Assisted Auto Bid</td>
+          <td>System auto-bids only on high-confidence rides and shows result on dashboard.</td>
+          <td>Medium</td>
+        </tr>
+        <tr>
+          <td>Full Auto Bid</td>
+          <td>System bids automatically under strict rules and audit logging.</td>
+          <td>Higher, after validation</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>9. Recommended Production Architecture</h2>
+    <div class="grid">
+      <div class="card">
+        <strong>Frontend</strong>
+        React or Next.js dashboard with operator actions, filters, live ride boards, and schedule views.
+      </div>
+      <div class="card">
+        <strong>Backend API</strong>
+        Node.js API for rides, recommendations, assignment approval, calendar retry, reports, and settings.
+      </div>
+      <div class="card">
+        <strong>Database</strong>
+        Supabase/Postgres as source of truth. Google Sheets can remain as reporting/export layer.
+      </div>
+      <div class="card">
+        <strong>Workers</strong>
+        WhatsApp Worker, OTS Worker, Recommendation Worker, Calendar Worker, Cleanup Worker, and future Auto Bidding Worker.
+      </div>
+    </div>
+
+    <h2>10. Implementation Roadmap</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Phase</th>
+          <th>Goal</th>
+          <th>Outcome</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Phase 1</td>
+          <td>Dashboard MVP over current systems</td>
+          <td>Read Google Sheets/current pipeline and show unified operational view.</td>
+        </tr>
+        <tr>
+          <td>Phase 2</td>
+          <td>Central database</td>
+          <td>Move rides, schedules, recommendations, and linked rides into Postgres.</td>
+        </tr>
+        <tr>
+          <td>Phase 3</td>
+          <td>Operator actions</td>
+          <td>Approve recommendations, assign drivers, retry calendar, edit review rides.</td>
+        </tr>
+        <tr>
+          <td>Phase 4</td>
+          <td>Linked ride intelligence</td>
+          <td>Return ride matching, savings estimate, and chain assignment.</td>
+        </tr>
+        <tr>
+          <td>Phase 5</td>
+          <td>Auto cleanup</td>
+          <td>Archive/delete old data while protecting future rides.</td>
+        </tr>
+        <tr>
+          <td>Phase 6</td>
+          <td>Auto bidding add-on</td>
+          <td>Criteria-based bidding with dashboard visibility and audit logs.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>11. Final Vision</h2>
+    <p>
+      The final system becomes a professional ACE Taxi Dispatch Control Panel. Operators will not need to jump between multiple sheets and scripts. WhatsApp and OTS rides will land in one place, the system will recommend the best driver and vehicle, linked ride opportunities will be highlighted, old data will be cleaned automatically, and calendar/bidding workflows will be visible from the dashboard.
+    </p>
+
+    <div class="footer">
+      Prepared for ACE Taxi Dispatch - Unified Dashboard and Production Automation Plan
+    </div>
+  </main>
+</body>
+</html>

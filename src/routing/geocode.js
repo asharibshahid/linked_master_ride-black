@@ -356,7 +356,7 @@ function createGeocoder(options = {}) {
       }
 
       for (const candidate of candidates) {
-        logger.info("Geocode retry attempt", {
+        logger.debug("Geocode retry attempt", {
           stage: "geocoding",
           fallbackUsed: candidate.attemptType !== "exact",
           reason: candidate.attemptType,

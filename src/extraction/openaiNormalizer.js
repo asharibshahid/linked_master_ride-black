@@ -427,7 +427,7 @@ function createOpenAiNormalizer(options = {}) {
     const activeClient = input.client || client;
 
     if (!activeClient) {
-      safeLogger.info("OpenAI normalization skipped, using local data", {
+      safeLogger.debug("OpenAI normalization skipped, using local data", {
         stage: "openai_normalization",
         fallbackUsed: true,
         reason: "API key or SDK unavailable"
@@ -485,7 +485,7 @@ function createOpenAiNormalizer(options = {}) {
         fromAi: normalizeObjectShape(aiObject)
       });
 
-      safeLogger.info("OpenAI normalization completed", {
+      safeLogger.debug("OpenAI normalization completed", {
         stage: "openai_normalization",
         fallbackUsed: false,
         model

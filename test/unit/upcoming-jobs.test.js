@@ -5,7 +5,9 @@ const {
   buildUpcomingDedupeKey,
   isUpcomingHighValueRide,
   parseFare,
-  parsePickupDateTime
+  parsePickupDateTime,
+  sortRideRecordsByPickupDateTime,
+  sortUpcomingJobsSheet
 } = require("../../src/sheets/upcomingJobs");
 
 function createRecordingLogger() {
@@ -52,13 +54,18 @@ test("parsePickupDateTime parses UK-normalized dates and times deterministically
   const iso = parsePickupDateTime("2026-05-01", "16:30", {
     timeZone: "Europe/London"
   });
+  const shortMonth = parsePickupDateTime("Tuesday 11th Aug 2026", "10:00", {
+    timeZone: "Europe/London"
+  });
 
   assert.ok(morning instanceof Date);
   assert.ok(legacy instanceof Date);
   assert.ok(iso instanceof Date);
+  assert.ok(shortMonth instanceof Date);
   assert.equal(formatInUk(morning), "13/03/2026, 06:25");
   assert.equal(formatInUk(legacy), "07/10/2025, 20:05");
   assert.equal(formatInUk(iso), "01/05/2026, 16:30");
+  assert.equal(formatInUk(shortMonth), "11/08/2026, 10:00");
   assert.equal(parsePickupDateTime("Tomorrow", "12:00 pm"), null);
   assert.equal(parsePickupDateTime("Friday 13th March 2026", ""), null);
 });
@@ -80,6 +87,41 @@ test("buildUpcomingDedupeKey normalizes pickup, drop off, and starting timing", 
     "heathrow airport (lhr)|nine elms, london sw11 7dp|1:35 pm"
   );
   assert.equal(fromCanonical, fromHeaders);
+});
+
+test("sortRideRecordsByPickupDateTime orders valid rides by date then time and puts invalid dates last", () => {
+  const sorted = sortRideRecordsByPickupDateTime([
+    {
+      Refer: "RID-3",
+      "Pickup Day & Date": "5 August 2026",
+      "Starting Timing": "12:00"
+    },
+    {
+      Refer: "RID-BAD",
+      "Pickup Day & Date": "not a date",
+      "Starting Timing": "08:00"
+    },
+    {
+      Refer: "RID-1",
+      "Pickup Day & Date": "04/08/2026",
+      "Starting Timing": "12:00"
+    },
+    {
+      Refer: "RID-2",
+      "Pickup Day & Date": "Tuesday 4th August 2026",
+      "Starting Timing": "08:00"
+    },
+    {
+      Refer: "RID-NO-TIME",
+      "Pickup Day & Date": "4 August 2026",
+      "Starting Timing": ""
+    }
+  ]);
+
+  assert.deepEqual(
+    sorted.map((row) => row.Refer),
+    ["RID-2", "RID-1", "RID-NO-TIME", "RID-3", "RID-BAD"]
+  );
 });
 
 test("isUpcomingHighValueRide returns eligibility and skip reasons", () => {
@@ -254,12 +296,66 @@ test("appendUpcomingJobIfEligible appends qualifying rides and dedupes using liv
   assert.equal(appendCalls.length, 1);
   assert.equal(appendCalls[0].refer, "RID-FRESH");
 
-  const duplicateLog = entries.find(
-    (entry) => entry.message === "Upcoming job skipped because duplicate exists"
-  );
   const appendedLog = entries.find((entry) => entry.message === "Upcoming job appended");
-  assert.ok(duplicateLog);
   assert.ok(appendedLog);
+});
+
+test("sortUpcomingJobsSheet rewrites existing Upcoming Jobs rows in pickup date and time order", async () => {
+  const headers = [
+    "Refer",
+    "Group Name",
+    "Source Name",
+    "Source Time",
+    "Pickup Day & Date",
+    "Starting Timing",
+    "Pickup",
+    "Drop Off",
+    "Distance",
+    "Fare",
+    "Required Vehicle",
+    "Payment Status"
+  ];
+  const rows = [
+    ["RID-3", "", "", "", "5 August 2026", "12:00", "C", "D", "", "120", "MPV", ""],
+    ["RID-1", "", "", "", "4 August 2026", "12:00", "A", "B", "", "120", "MPV", ""],
+    ["RID-2", "", "", "", "4 August 2026", "08:00", "A", "B", "", "120", "MPV", ""],
+    ["RID-BAD", "", "", "", "bad date", "08:00", "X", "Y", "", "120", "MPV", ""]
+  ];
+  const calls = [];
+  const sheetsClient = {
+    spreadsheets: {
+      values: {
+        get: async ({ range }) => {
+          if (String(range).includes("!1:1")) return { data: { values: [headers] } };
+          return { data: { values: [headers, ...rows] } };
+        },
+        clear: async (request) => {
+          calls.push({ type: "clear", request });
+          return {};
+        },
+        update: async (request) => {
+          calls.push({ type: "update", request });
+          return {};
+        }
+      }
+    }
+  };
+
+  const result = await sortUpcomingJobsSheet({
+    sheetsClient,
+    spreadsheetId: "sheet-id",
+    worksheetName: "Upcoming Jobs >79",
+    logger: createRecordingLogger().logger
+  });
+
+  assert.equal(result.sorted, true);
+  assert.equal(calls[0].type, "clear");
+  assert.equal(calls[0].request.range, "'Upcoming Jobs >79'!A2:L");
+  assert.equal(calls[1].type, "update");
+  assert.deepEqual(
+    calls[1].request.requestBody.values.map((row) => row[0]),
+    ["RID-2", "RID-1", "RID-3", "RID-BAD"]
+  );
 });
 
 test("appendUpcomingJobIfEligible skips low fares and invalid datetimes without appending", async () => {
@@ -320,11 +416,5 @@ test("appendUpcomingJobIfEligible skips low fares and invalid datetimes without 
   assert.equal(lowFare.reason, "fare_too_low");
   assert.equal(invalidDateTime.reason, "pickup_datetime_invalid");
   assert.equal(appendCalls.length, 0);
-  assert.ok(entries.some((entry) => entry.message === "Upcoming job skipped because fare <= 79"));
-  assert.ok(
-    entries.some(
-      (entry) =>
-        entry.message === "Upcoming job skipped because pickup datetime is invalid or missing"
-    )
-  );
+  assert.equal(entries.length, 0);
 });

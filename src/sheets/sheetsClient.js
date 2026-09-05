@@ -205,7 +205,7 @@ function createSheetsClient(options = {}) {
 
   const credentials = validation.credentialsStatus;
 
-  logger.info("Google credentials ready", {
+  logger.debug("Google credentials ready", {
     stage: "sheets_auth",
     reason:
       credentials.source === "env_json"
@@ -225,7 +225,7 @@ function createSheetsClient(options = {}) {
       auth
     });
 
-    logger.info("Google Sheets auth ready", {
+    logger.debug("Google Sheets auth ready", {
       stage: "sheets_auth",
       fallbackUsed: false
     });
