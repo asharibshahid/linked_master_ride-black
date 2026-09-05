@@ -1,0 +1,12 @@
+
+.env
+.env.*
+!.env.example
+credentials.json
+data/
+data/.wwebjs_auth/
+data/.wwebjs_cache/
+.wwebjs_auth/
+.wwebjs_cache/
+node_modules/
+npm-debug.log*
