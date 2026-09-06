@@ -358,6 +358,7 @@
     const selected = state.selected[key]?.has(job.rideId);
     const expiry = job.expiresAt || job.sourceExpiresAt || job.offerExpiresAt;
     const bidValue = existingBid?.bidAmount ?? numeric(job.guidePriceMin) ?? "";
+    const guideLine = key === "master" && job.guidePriceText ? `<div class="guide-line">${esc(job.guidePriceText)}</div>` : "";
     const bidHistory = existingBid ? `<div class="bid-history">Persisted bid <b>${money(existingBid.bidAmount)}</b> - ${esc(existingBid.bidStatus || existingBid.submissionState || "Created")}</div>` : "";
     const masterActions = key === "master" ? `<div class="card-actions"><input class="bid-amount" type="number" min="0.01" step="0.01" value="${esc(bidValue)}" data-bid-amount="${esc(job.rideId)}" aria-label="Bid amount for ${esc(job.rideId)}" ${bidLocked || submitting ? "disabled" : ""}><button class="button primary" type="button" data-submit-bid="${esc(job.rideId)}" ${bidLocked || submitting ? "disabled" : ""}>${submitting ? "Submitting" : bidLocked ? esc(existingBid.bidStatus || "Saved") : existingBid ? "Submit" : "Bid"}</button><button class="button copy-button" type="button" data-copy-job="${esc(job.rideId)}">Copy Detail</button></div>${bidLocked ? "" : `<input class="bid-reason" type="text" maxlength="240" data-bid-reason="${esc(job.rideId)}" value="${esc(existingBid?.reason || "")}" placeholder="Reason (optional)">`}` : `<div class="card-actions compact-actions"><button class="button copy-button" type="button" data-copy-job="${esc(job.rideId)}">Copy Detail</button></div>`;
     return `<article class="job-card ${category}${linked ? " linked" : ""}">
@@ -365,6 +366,7 @@
       <div class="job-time">${esc(pickupLabel(job))}</div>
       <div class="job-route"><div class="route-track"><span></span></div><div class="route-points"><div><small>Pickup</small><strong>${esc(job.pickup || "Pickup missing")}</strong></div><div><small>Drop-off</small><strong>${esc(job.dropOff || "Drop-off missing")}</strong></div></div></div>
       <div class="job-meta"><span><b>${esc(job.requiredVehicle || job.vehicle || "Vehicle missing")}</b></span><span>${numeric(job.distance) === null ? "Distance missing" : `${esc(numeric(job.distance))} mi`}</span><span class="fare">${esc(key === "master" ? guidePrice(job) : money(job.fare))}</span><span class="status-pill ${job.eligible === false ? "bad" : ""}">${key === "master" ? "Live" : job.eligible === false ? "Review" : "Eligible"}</span></div>
+      ${guideLine}
       ${expiry ? `<div class="expiry">Expires ${esc(formatUkDateTime(expiry))}</div>` : ""}${key === "master" ? linkedRecommendation(linked) : linked ? linkedRecommendation(linked) : ""}${bidHistory}${masterActions}
     </article>`;
   }

@@ -40,6 +40,7 @@ test("Bid tab renders persisted bids and Master uses the guarded endpoint", () =
 test("Master displays source guide prices and both copy actions use backend copyDetail", () => {
   assert.match(script, /function guidePrice\(job/);
   assert.match(script, /job\.guidePriceMin/);
+  assert.match(script, /guideLine = key === "master" && job\.guidePriceText/);
   assert.match(script, /if \(job\.copyDetail\) return job\.copyDetail/);
   assert.doesNotMatch(script, /const bidValue = existingBid\?\.bidAmount \?\? numeric\(job\.fare\)/);
 });
