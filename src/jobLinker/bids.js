@@ -65,8 +65,10 @@ function validateManualBidRide(ride, now = new Date()) {
 }
 
 function normalizeSubmitResult(result = {}) {
+  const state = cleanText(result.state || (result.success ? "confirmed" : "failed")).toLowerCase();
   return {
-    success: Boolean(result.success),
+    state,
+    success: Boolean(result.success || (result.ok && state === "confirmed")),
     bidAmount: cleanText(result.bidAmount),
     providerReference: cleanText(result.providerReference),
     message: cleanText(result.reason || result.message)
@@ -123,6 +125,7 @@ function createJobLinkerBidService(options = {}) {
         await persistCompletion({
           bidId: reservation.bidId,
           success: false,
+          state: result.state,
           bidAmount: reservation.trustedBid.bidAmount,
           message: publicProviderFailure(result.message || "OTS submitter returned an unsuccessful result.")
         });
@@ -131,6 +134,7 @@ function createJobLinkerBidService(options = {}) {
       await persistCompletion({
         bidId: reservation.bidId,
         success: true,
+        state: result.state,
         bidAmount: result.bidAmount || reservation.trustedBid.bidAmount,
         providerReference: result.providerReference,
         message: result.message || "OTS provider confirmed the submission."

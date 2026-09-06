@@ -248,7 +248,7 @@
 
   function bidBlocksSubmission(bid) {
     if (!bid) return false;
-    return !["suggested", "approved"].includes(String(bid.bidStatus || "").toLowerCase());
+    return !["suggested", "approved", "failed", "submission failed", "submission unconfirmed"].includes(String(bid.bidStatus || "").toLowerCase());
   }
 
   function jobFromBid(bid = {}) {
@@ -574,7 +574,7 @@
 
   function terminalBidStatus(bid) {
     const status = String(bid?.bidStatus || "").toLowerCase();
-    return status === "submitted" || status === "submission failed";
+    return status === "submitted" || status === "submission failed" || status === "submission unconfirmed";
   }
 
   async function pollBidStatus(rideId) {

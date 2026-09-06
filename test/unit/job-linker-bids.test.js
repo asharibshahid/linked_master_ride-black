@@ -17,6 +17,7 @@ function trustedReservation(overrides = {}) {
     bid: { bidId: "bid-1", rideId: "OTS-1", bidStatus: "Created", submissionState: "created" },
     trustedBid: {
       rideId: "OTS-1",
+      sourceReference: "OTS-1",
       source: "OTS",
       pickup: "Heathrow",
       dropOff: "Chelsea",
@@ -86,6 +87,7 @@ test("manual Job Linker bid returns a durable queued state before provider compl
   assert.equal(completions.length, 0);
   await waitFor(() => submitted.length === 1);
   assert.equal(submitted[0].pickup, "Heathrow");
+  assert.equal(submitted[0].sourceReference, "OTS-1");
   releaseProvider();
   await waitFor(() => completions.length === 1);
   assert.equal(completions[0].success, true);
@@ -112,6 +114,23 @@ test("manual Job Linker bid persists submitter failure without claiming success"
   assert.equal(completions.length, 1);
   assert.equal(completions[0].success, false);
   assert.equal(completions[0].message, "provider page unavailable");
+  service.stop();
+});
+
+test("manual Job Linker bid preserves an unconfirmed provider outcome", async () => {
+  const completions = [];
+  const repository = serviceRepository({
+    completeManualBid: async (value) => { completions.push(value); return { bidStatus: "Submission Unconfirmed", submissionState: "unconfirmed" }; }
+  });
+  const service = createJobLinkerBidService({
+    repository,
+    submitBid: async () => ({ ok: false, state: "unconfirmed", reason: "bid form remained visible" }),
+    autoStart: false
+  });
+  await service.submitManualBid({ rideId: "OTS-1", bidAmount: 110 });
+  await waitFor(() => completions.length === 1);
+  assert.equal(completions[0].success, false);
+  assert.equal(completions[0].state, "unconfirmed");
   service.stop();
 });
 
@@ -211,6 +230,49 @@ test("repository duplicate guard locks the ride and rejects a repeated persisted
   const existingIndex = queries.findIndex((sql) => sql.includes("select * from bids"));
   assert.ok(lockIndex >= 0 && lockIndex < existingIndex);
   assert.equal(queries.some((sql) => sql === "rollback"), true);
+});
+
+test("repository lets failed manual bid attempts be retried for an active OTS ride", async () => {
+  let updateParams = null;
+  const repository = new JobLinkerRepository();
+  repository.withClient = async (run) => run({
+    query: async (sql, params = []) => {
+      const statement = String(sql);
+      if (statement.includes("select * from rides")) {
+        return {
+          rowCount: 1,
+          rows: [{
+            ride_id: "OTS-RETRY",
+            refer: "OTS-RETRY",
+            source_type: "OTS",
+            pickup_at: "2026-09-06T10:00:00.000Z",
+            source_expires_at: "2026-09-06T09:00:00.000Z"
+          }]
+        };
+      }
+      if (statement.includes("select * from bids")) {
+        return {
+          rowCount: 1,
+          rows: [{ bid_id: "bid-failed", ride_id: "OTS-RETRY", bid_status: "Submission Failed" }]
+        };
+      }
+      if (statement.includes("update bids") && statement.includes("bid_status = 'Created'")) {
+        updateParams = params;
+        return { rowCount: 1, rows: [{ bid_id: "bid-failed", ride_id: "OTS-RETRY", bid_status: "Created" }] };
+      }
+      return { rowCount: 0, rows: [] };
+    }
+  });
+
+  const result = await repository.reserveManualBid({
+    rideId: "OTS-RETRY",
+    bidAmount: 125,
+    now: new Date("2026-09-05T10:00:00.000Z")
+  });
+
+  assert.equal(result.bidId, "bid-failed");
+  assert.equal(result.trustedBid.sourceReference, "OTS-RETRY");
+  assert.equal(updateParams[1], 125);
 });
 
 test("GET Job Linker includes persisted bids on initial load and refresh", async () => {

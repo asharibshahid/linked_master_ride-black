@@ -35,7 +35,8 @@ async function syncOtsMaster(options = {}) {
   }));
   const imported = await options.repository.syncSourceJobs(jobs, "OTS");
   const activeRideIds = jobs.map((job) => job.refer).filter(Boolean);
-  const removed = sourceComplete && rows.length > 0 && typeof options.repository.expireMissingOtsJobs === "function"
+  // A complete zero-result inventory is valid and must expire all stale OTS jobs.
+  const removed = sourceComplete && typeof options.repository.expireMissingOtsJobs === "function"
     ? await options.repository.expireMissingOtsJobs(activeRideIds)
     : { affected: 0 };
   const acknowledgement = await acknowledgeOtsDispatchImport(projectPath, formattedRowsPath);

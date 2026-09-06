@@ -13,9 +13,26 @@ function resolveNodeExecutable(value) {
   return safeTrim(value) || process.execPath;
 }
 
+function normalizeOtsReference(value) {
+  return toCell(value).replace(/\s+/g, "").toUpperCase();
+}
+
+function buildV2WorkerArgs(scriptPath, bid = {}) {
+  const reference = normalizeOtsReference(bid.sourceReference || bid.rideId);
+  if (!reference || !reference.startsWith("OTS-")) {
+    throw new Error("A valid OTS source reference is required before starting the bid worker");
+  }
+  const amount = toCell(bid.bidAmount || bid.fare);
+  if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+    throw new Error("A finite positive bid amount is required before starting the bid worker");
+  }
+  return [path.resolve(scriptPath), "--reference", reference, "--amount", amount];
+}
+
 function buildSubmitPayload(bid = {}) {
   return {
     rideId: toCell(bid.rideId),
+    sourceReference: toCell(bid.sourceReference || bid.rideId),
     source: toCell(bid.source),
     pickup: toCell(bid.pickup),
     dropOff: toCell(bid.dropOff),
@@ -34,9 +51,10 @@ function parseSubmitterOutput(text) {
     try {
       const parsed = JSON.parse(trimmed);
       return {
-        success: Boolean(parsed.success),
-        bidAmount: toCell(parsed.bidAmount),
-        providerReference: toCell(parsed.providerReference),
+        state: toCell(parsed.state || (parsed.success ? "confirmed" : "failed")).toLowerCase(),
+        success: Boolean(parsed.success || (parsed.ok && parsed.state === "confirmed")),
+        bidAmount: toCell(parsed.bidAmount || parsed.amount),
+        providerReference: toCell(parsed.providerReference || parsed.reference),
         reason: toCell(parsed.reason || parsed.message)
       };
     } catch {
@@ -45,6 +63,7 @@ function parseSubmitterOutput(text) {
   }
 
   return {
+    state: "failed",
     success: false,
     reason: safeTrim(text) || "OTS submitter returned no JSON result"
   };
@@ -84,10 +103,15 @@ function createOtsWorkerSubmitter(options = {}) {
       throw new Error(`OTS bid submit script not found: ${resolvedScriptPath}`);
     }
 
-    const payloadFile = createTempPayloadFile(buildSubmitPayload(bid));
+    const payload = buildSubmitPayload(bid);
+    const isV2 = path.basename(resolvedScriptPath).toLowerCase() === "submit_bid_v2.js";
+    const payloadFile = isV2 ? null : createTempPayloadFile(payload);
     try {
       return await new Promise((resolve, reject) => {
-        const child = spawn(nodeExecutable, [resolvedScriptPath, "--input", payloadFile.filePath], {
+        const args = isV2
+          ? buildV2WorkerArgs(resolvedScriptPath, payload)
+          : [resolvedScriptPath, "--input", payloadFile.filePath];
+        const child = (options.spawn || spawn)(nodeExecutable, args, {
           cwd: projectPath ? path.resolve(projectPath) : path.dirname(resolvedScriptPath),
           env: { ...process.env, ...(options.env || {}) },
           stdio: ["ignore", "pipe", "pipe"]
@@ -112,7 +136,7 @@ function createOtsWorkerSubmitter(options = {}) {
         child.on("exit", (code) => {
           clearTimeout(timer);
           const result = parseSubmitterOutput(stdout);
-          if (code === 0 && result.success) {
+          if (code === 0) {
             resolve(result);
             return;
           }
@@ -126,13 +150,15 @@ function createOtsWorkerSubmitter(options = {}) {
         });
       });
     } finally {
-      payloadFile.cleanup();
+      if (payloadFile) payloadFile.cleanup();
     }
   };
 }
 
 module.exports = {
   buildSubmitPayload,
+  buildV2WorkerArgs,
+  normalizeOtsReference,
   parseSubmitterOutput,
   createOtsWorkerSubmitter
 };

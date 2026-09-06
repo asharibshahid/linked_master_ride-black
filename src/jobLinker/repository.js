@@ -44,7 +44,12 @@ function submissionState(row = {}, payload = {}) {
   if (status === "submitted") return "submitted";
   if (status === "submitting") return "attempting";
   if (status === "submission failed") return "failed";
+  if (status === "submission unconfirmed") return "unconfirmed";
   return status === "created" ? "created" : "pending";
+}
+
+function canReuseManualBidStatus(value) {
+  return ["suggested", "approved", "failed", "submission failed", "submission unconfirmed"].includes(text(value).toLowerCase());
 }
 
 function mapWorkspaceBid(row = {}) {
@@ -399,6 +404,7 @@ class JobLinkerRepository {
         bid: mapWorkspaceBid(row),
         trustedBid: {
           rideId: text(row.ride_id),
+          sourceReference: text(row.refer || row.ride_id),
           source: "OTS",
           pickup: text(row.pickup),
           dropOff: text(row.drop_off),
@@ -451,7 +457,7 @@ class JobLinkerRepository {
         );
         if (existing.rowCount) {
           const existingStatus = text(existing.rows[0].bid_status).toLowerCase();
-          if (!["suggested", "approved"].includes(existingStatus)) {
+          if (!canReuseManualBidStatus(existingStatus)) {
             throw new JobLinkerBidError(
               "DUPLICATE_BID",
               "A persisted bid already exists for this OTS job.",
@@ -496,6 +502,7 @@ class JobLinkerRepository {
           bid: mapWorkspaceBid({ ...ride, ...inserted.rows[0] }),
           trustedBid: {
             rideId: cleanRideId,
+            sourceReference,
             source: "OTS",
             pickup: text(ride.pickup),
             dropOff: text(ride.drop_off),
@@ -531,14 +538,15 @@ class JobLinkerRepository {
     });
   }
 
-  async completeManualBid({ bidId, success, bidAmount, providerReference = "", message = "" } = {}) {
+  async completeManualBid({ bidId, success, state = "", bidAmount, providerReference = "", message = "" } = {}) {
     const cleanBidId = text(bidId);
     return this.withClient(async (client) => {
       const completedAt = new Date().toISOString();
-      const bidStatus = success ? "Submitted" : "Submission Failed";
+      const normalizedState = text(state).toLowerCase();
+      const bidStatus = success ? "Submitted" : normalizedState === "unconfirmed" ? "Submission Unconfirmed" : "Submission Failed";
       const metadata = {
         submission: {
-          state: success ? "submitted" : "failed",
+          state: success ? "submitted" : normalizedState === "unconfirmed" ? "unconfirmed" : "failed",
           completedAt,
           providerReference: text(providerReference),
           message: text(message)

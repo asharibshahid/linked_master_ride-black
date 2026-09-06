@@ -502,7 +502,7 @@ const env = Object.freeze({
   }),
   otsBidSubmitScript: resolveDataPath(
     process.env.OTS_BID_SUBMIT_SCRIPT,
-    path.resolve(PROJECT_ROOT, "../../ridemanagemnet/ride_Managment_Worker/scripts/submit_bid.js")
+    path.resolve(PROJECT_ROOT, "../../ridemanagemnet/ride_Managment_Worker/scripts/submit_bid_v2.js")
   ),
   otsBidSubmitTimeoutMs: parseNumber(process.env.OTS_BID_SUBMIT_TIMEOUT_MS, 120000, {
     integer: true,

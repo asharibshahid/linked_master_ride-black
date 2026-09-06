@@ -28,11 +28,11 @@ Master, PreBook, Groups, and Linker show their own backend source state. A faile
 
 - `GET /api/job-linker` includes persisted `bids` joined to trusted ride data.
 - Master submits only `rideId`, `bidAmount`, and an optional reason to authenticated `POST /api/job-linker/bids`.
-- The server reloads the OTS ride from Supabase, validates that it is active, and reserves the bid under a per-ride PostgreSQL transaction lock. The POST then returns immediately while a durable server queue invokes the existing `src/bids/otsSubmitter.js` adapter in the background.
-- Status progresses through `Created`, `Submitting`, and then `Submitted` or `Submission Failed`.
-- The dashboard polls persisted status with a fixed timeout. Provider submission requires an exact visible OTS reference and explicit provider response/UI confirmation; a browser refresh or transient frontend failure cannot create a second bid.
+- The server reloads the OTS ride from Supabase, validates that it is active, and reserves the bid under a per-ride PostgreSQL transaction lock. The POST then returns immediately while a durable server queue invokes `src/bids/otsSubmitter.js`, which calls the OTS worker V2 script with only `--reference` and `--amount`.
+- Status progresses through `Created`, `Submitting`, and then `Submitted`, `Submission Unconfirmed`, or `Submission Failed`.
+- The dashboard polls persisted status with a fixed timeout. Provider submission requires an exact visible OTS reference, a successful natural provider acceptance response, and Price/Submit form disappearance for a continuous 3 seconds. A browser refresh or transient frontend failure cannot create a second bid.
 - A successful browser submission is not treated as a won job. At bid reservation time the server stores normalized OTS `rides.refer` as `pricing_payload.sourceReferenceKey`. `Confirmed` requires that exact normalized business reference to equal booked PreBook `rides.refer`, sourced from the sheet `Booking ID` column. `ACE ID` and internal Supabase `ride_id` are not confirmation identifiers. Matching ignores case and whitespace only. An expired submitted offer without that signal becomes `Unconfirmed`; the system never fabricates `Lost`.
-- Repeated submission is blocked by persisted status checks and the server-side advisory lock. Master and Bid reload their state from the API, so browser refresh does not lose bid history.
+- Repeated submission is blocked by persisted status checks and the server-side advisory lock. Failed and unconfirmed attempts are retryable from Master when the OTS job is still active. Master and Bid reload their state from the API, so browser refresh does not lose bid history.
 - Auto Bid remains disabled. Multi-account OTS sessions are outside the current delivery.
 
 ## Source Flow
@@ -91,9 +91,10 @@ The prior ride extraction, Sheets backup, Final Bid, recommendation, schedules, 
 
 ## Verification
 
-- Full automated suite: 259 unit tests and 5 smoke tests passing.
+- Full automated suite: 272 unit tests and 5 smoke tests passing.
 - `npm run check` passes.
 - Eight frontend contract tests cover final navigation, real API wiring, persisted Bid polling, exact source guide/copy fields, backend Linker facts, source failure states, truthful Bid counters, responsive card structure, and encoding safety.
-- The operator's separately controlled real OTS bid test passed. Automated tests never submit a real provider bid.
+- The operator's separately controlled real OTS bid test passed through local OTS: exact reference `OTS-06092026155015-32030-1`, bid amount `GBP 125`, OTS displayed persistent `Price Sent` confirmation after reload. Automated tests never submit a real provider bid.
+- OTS worker V2 has 28 local regression tests covering exact reference filtering, React keyboard amount entry, correct detail scroll container, overlay-safe keyboard Submit, one activation maximum, provider response observation, and 3-second form-disappearance confirmation.
 - Link counts are live and may be zero when no current PreBook/source pair satisfies the independent Linker rules.
 - Migration `007_ots_master_hotfix.sql` stores exact OTS guide/passenger/luggage metadata and protects existing bid source rides.

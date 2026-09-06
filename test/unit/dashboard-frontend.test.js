@@ -78,3 +78,15 @@ test("Bid summary does not count confirmed bids as submitted and unconfirmed", (
   assert.match(script, /\["submitted", "unconfirmed"\]\.includes\(String\(bid\.bidStatus\)/);
   assert.doesNotMatch(script, /String\(bid\.submissionState\)\.toLowerCase\(\) === "submitted"/);
 });
+
+test("terminal unconfirmed bids stop polling instead of showing still processing", () => {
+  const block = script.slice(script.indexOf("function terminalBidStatus"), script.indexOf("async function pollBidStatus"));
+  assert.match(block, /status === "submission unconfirmed"/);
+});
+
+test("failed and unconfirmed submission attempts remain retryable from Master", () => {
+  const block = script.slice(script.indexOf("function bidBlocksSubmission"), script.indexOf("function jobFromBid"));
+  assert.match(block, /"submission failed"/);
+  assert.match(block, /"submission unconfirmed"/);
+  assert.doesNotMatch(block, /"submitted"/);
+});

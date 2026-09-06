@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   DEFAULT_JOB_LINKER_CRITERIA,
   evaluateJob,
@@ -37,6 +39,12 @@ function job(overrides = {}) {
     ...overrides
   };
 }
+
+test("complete empty OTS inventory is allowed to reconcile stale Master jobs", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../../src/jobLinker/otsMaster.js"), "utf8");
+  assert.match(source, /const removed = sourceComplete && typeof options\.repository\.expireMissingOtsJobs/);
+  assert.doesNotMatch(source, /sourceComplete && rows\.length > 0/);
+});
 
 const TEST_COORDINATES = Object.freeze({
   "Heathrow Airport Terminal 5": { lat: 51.47, lng: -0.4543 },
