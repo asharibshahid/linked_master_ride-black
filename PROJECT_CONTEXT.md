@@ -41,6 +41,7 @@ Master, PreBook, Groups, and Linker show their own backend source state. A faile
 - OTS pipeline and Job Linker sync run automatically every 60 seconds.
 - OTS production formatting is deterministic and does not use OpenAI.
 - Every complete scrape publishes the full current OTS inventory. Master displays the exact source guide minimum/maximum and source sentence; OSRM estimates remain internal and are never presented as the OTS guide fare.
+- The OTS scraper waits for each selected detail panel to finish loading before it captures the guide range, passenger count, and luggage wording. A loading placeholder is never imported as source detail.
 - WhatsApp ingestion continues through the existing parser. The external WhatsApp source spreadsheet `1a3iA7ze74SIDU2uCFlfFL2OfUAkZBkuHIghnsjHmGj4` is also synchronized from its `Saloon` and `MPV` tabs. Only jobs passing the shared Job Linker formula appear in `Groups`; the source tab determines the normalized vehicle category.
 - `Groups` can be filtered by `All vehicles`, `Saloon`, or `MPV`.
 - WhatsApp currently requires a QR scan when no valid LocalAuth session exists. Settings renders and refreshes the protected QR image directly. The operator can load connected groups, add/remove allowed groups with checkboxes, save the selection, or clear all groups to disable group ingestion.
@@ -94,5 +95,5 @@ The prior ride extraction, Sheets backup, Final Bid, recommendation, schedules, 
 - `npm run check` passes.
 - Eight frontend contract tests cover final navigation, real API wiring, persisted Bid polling, exact source guide/copy fields, backend Linker facts, source failure states, truthful Bid counters, responsive card structure, and encoding safety.
 - The operator's separately controlled real OTS bid test passed. Automated tests never submit a real provider bid.
-- Live linker verification after the PreBook date fix: 91 active PreBook anchors, 75 eligible source candidates, and 11 current linked opportunities.
+- Link counts are live and may be zero when no current PreBook/source pair satisfies the independent Linker rules.
 - Migration `007_ots_master_hotfix.sql` stores exact OTS guide/passenger/luggage metadata and protects existing bid source rides.
