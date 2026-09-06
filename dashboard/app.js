@@ -2,6 +2,8 @@
   "use strict";
 
   const PAGE_SIZE = 24;
+  const BID_POLL_INTERVAL_MS = 2000;
+  const BID_POLL_TIMEOUT_MS = 150000;
   const TOKEN_KEY = "aceDashboardToken";
   const ACTOR_KEY = "aceDashboardActor";
   const CATEGORY_META = {
@@ -10,7 +12,7 @@
     other: { label: "People Carrier / Executive / MPV" }
   };
   const VIEW_META = {
-    master: ["OTS LIVE JOBS", "Master", "Eligible OTS jobs ready for review."],
+    master: ["OTS LIVE JOBS", "Master", "All currently live OTS quotation requests."],
     bid: ["BID WORKSPACE", "Bid", "Persisted manual OTS submissions and confirmed outcomes."],
     prebook: ["CONFIRMED WORK", "PreBook", "Future confirmed bookings used as Linker anchors."],
     groups: ["WHATSAPP JOBS", "Groups", "Eligible Saloon and MPV jobs from WhatsApp sources."],
@@ -59,6 +61,14 @@
   function money(value) {
     const amount = numeric(value);
     return amount === null ? "-" : `\u00a3${amount.toFixed(2)}`;
+  }
+
+  function guidePrice(job = {}) {
+    const minimum = numeric(job.guidePriceMin);
+    const maximum = numeric(job.guidePriceMax);
+    if (minimum !== null && maximum !== null) return `${money(minimum)} - ${money(maximum)}`;
+    if (minimum !== null) return `From ${money(minimum)}`;
+    return "Guide unavailable";
   }
 
   function dateValue(value, fallback = Number.POSITIVE_INFINITY) {
@@ -253,7 +263,13 @@
       dropOff: bid.dropOff,
       requiredVehicle: bid.requiredVehicle,
       distance: bid.distance,
-      fare: bid.originalFare
+      fare: bid.originalFare,
+      passengerCount: bid.passengerCount,
+      luggageDetails: bid.luggageDetails,
+      guidePriceMin: bid.guidePriceMin,
+      guidePriceMax: bid.guidePriceMax,
+      guidePriceText: bid.guidePriceText,
+      copyDetail: bid.copyDetail
     };
   }
 
@@ -341,14 +357,14 @@
     const submitting = state.submittingBids.has(job.rideId);
     const selected = state.selected[key]?.has(job.rideId);
     const expiry = job.expiresAt || job.sourceExpiresAt || job.offerExpiresAt;
-    const bidValue = existingBid?.bidAmount ?? numeric(job.fare) ?? "";
+    const bidValue = existingBid?.bidAmount ?? numeric(job.guidePriceMin) ?? "";
     const bidHistory = existingBid ? `<div class="bid-history">Persisted bid <b>${money(existingBid.bidAmount)}</b> - ${esc(existingBid.bidStatus || existingBid.submissionState || "Created")}</div>` : "";
     const masterActions = key === "master" ? `<div class="card-actions"><input class="bid-amount" type="number" min="0.01" step="0.01" value="${esc(bidValue)}" data-bid-amount="${esc(job.rideId)}" aria-label="Bid amount for ${esc(job.rideId)}" ${bidLocked || submitting ? "disabled" : ""}><button class="button primary" type="button" data-submit-bid="${esc(job.rideId)}" ${bidLocked || submitting ? "disabled" : ""}>${submitting ? "Submitting" : bidLocked ? esc(existingBid.bidStatus || "Saved") : existingBid ? "Submit" : "Bid"}</button><button class="button copy-button" type="button" data-copy-job="${esc(job.rideId)}">Copy Detail</button></div>${bidLocked ? "" : `<input class="bid-reason" type="text" maxlength="240" data-bid-reason="${esc(job.rideId)}" value="${esc(existingBid?.reason || "")}" placeholder="Reason (optional)">`}` : `<div class="card-actions compact-actions"><button class="button copy-button" type="button" data-copy-job="${esc(job.rideId)}">Copy Detail</button></div>`;
     return `<article class="job-card ${category}${linked ? " linked" : ""}">
       <div class="job-card-head"><input type="checkbox" data-select-key="${key}" data-id="${esc(job.rideId)}" ${selected ? "checked" : ""} aria-label="Select ${esc(job.rideId)}"><div class="job-ref">${esc(job.rideId || "Reference missing")}</div><span class="job-source">${esc(job.sourceName || job.sourceType || key)}</span></div>
       <div class="job-time">${esc(pickupLabel(job))}</div>
       <div class="job-route"><div class="route-track"><span></span></div><div class="route-points"><div><small>Pickup</small><strong>${esc(job.pickup || "Pickup missing")}</strong></div><div><small>Drop-off</small><strong>${esc(job.dropOff || "Drop-off missing")}</strong></div></div></div>
-      <div class="job-meta"><span><b>${esc(job.requiredVehicle || job.vehicle || "Vehicle missing")}</b></span><span>${numeric(job.distance) === null ? "Distance missing" : `${esc(numeric(job.distance))} mi`}</span><span class="fare">${money(job.fare)}</span><span class="status-pill ${job.eligible === false ? "bad" : ""}">${job.eligible === false ? "Review" : "Eligible"}</span></div>
+      <div class="job-meta"><span><b>${esc(job.requiredVehicle || job.vehicle || "Vehicle missing")}</b></span><span>${numeric(job.distance) === null ? "Distance missing" : `${esc(numeric(job.distance))} mi`}</span><span class="fare">${esc(key === "master" ? guidePrice(job) : money(job.fare))}</span><span class="status-pill ${job.eligible === false ? "bad" : ""}">${key === "master" ? "Live" : job.eligible === false ? "Review" : "Eligible"}</span></div>
       ${expiry ? `<div class="expiry">Expires ${esc(formatUkDateTime(expiry))}</div>` : ""}${key === "master" ? linkedRecommendation(linked) : linked ? linkedRecommendation(linked) : ""}${bidHistory}${masterActions}
     </article>`;
   }
@@ -380,11 +396,11 @@
     const ready = Boolean(source.otsEnabled && source.otsLastSyncAt && !failed);
     const banner = $("#master-source-banner");
     banner.classList.toggle("source-error", failed);
-    banner.innerHTML = `<div><strong>${failed ? "OTS source needs attention" : ready ? "Live OTS source connected" : source.otsEnabled ? "OTS source is starting" : "OTS source is not configured"}</strong><span>${failed ? esc(source.otsLastError) : ready ? `${Number(source.otsRowsImported || 0)} rows synchronized at ${esc(formatUkDateTime(source.otsLastSyncAt))}.` : "Master only displays eligible jobs synchronized by the backend worker."}</span></div><span class="status-pill ${ready ? "" : failed ? "bad" : "warn"}">${ready ? "Live" : failed ? "Error" : "Waiting"}</span>`;
+    banner.innerHTML = `<div><strong>${failed ? "OTS source needs attention" : ready ? "Live OTS source connected" : source.otsEnabled ? "OTS source is starting" : "OTS source is not configured"}</strong><span>${failed ? esc(source.otsLastError) : ready ? `${Number(source.otsRowsImported || 0)} of ${Number(source.otsRowsSeen || source.otsRowsImported || 0)} live rows synchronized at ${esc(formatUkDateTime(source.otsLastSyncAt))}.` : "Master displays the complete live OTS inventory after source synchronization."}</span></div><span class="status-pill ${ready ? "" : failed ? "bad" : "warn"}">${ready ? "Live" : failed ? "Error" : "Waiting"}</span>`;
     const rows = filteredMaster();
     const linkedCount = rows.filter((job) => linkForJob(job.rideId)).length;
-    const fareValue = rows.reduce((total, job) => total + (numeric(job.fare) || 0), 0);
-    $("#master-summary").innerHTML = `<div class="stat"><strong>${rows.length}</strong><span>Jobs shown</span></div><div class="stat"><strong>${linkedCount}</strong><span>Linked opportunities</span></div><div class="stat"><strong>${money(fareValue)}</strong><span>Visible fare value</span></div>`;
+    const fareValue = rows.reduce((total, job) => total + (numeric(job.guidePriceMin) || 0), 0);
+    $("#master-summary").innerHTML = `<div class="stat"><strong>${rows.length}</strong><span>Jobs shown</span></div><div class="stat"><strong>${linkedCount}</strong><span>Linked opportunities</span></div><div class="stat"><strong>${money(fareValue)}</strong><span>Visible guide minimum</span></div>`;
     renderJobColumns("master", rows);
   }
 
@@ -540,6 +556,7 @@
   }
 
   function formatJobDetail(job) {
+    if (job.copyDetail) return job.copyDetail;
     return [
       job.rideId,
       "Route:",
@@ -551,6 +568,33 @@
       "",
       `Fare: ${money(job.fare)}`
     ].join("\n");
+  }
+
+  function terminalBidStatus(bid) {
+    const status = String(bid?.bidStatus || "").toLowerCase();
+    return status === "submitted" || status === "submission failed";
+  }
+
+  async function pollBidStatus(rideId) {
+    const deadline = Date.now() + BID_POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, BID_POLL_INTERVAL_MS));
+      try {
+        await load();
+      } catch {
+        continue;
+      }
+      const bid = bidForRide(rideId);
+      if (!terminalBidStatus(bid)) continue;
+      if (String(bid.bidStatus).toLowerCase() === "submitted") {
+        showNotice(`Bid ${rideId} was confirmed submitted by OTS.`);
+      } else {
+        showNotice(bid.submissionResult || `Bid ${rideId} failed.`, "error");
+      }
+      return bid;
+    }
+    showNotice(`Bid ${rideId} is still processing. Its persisted status remains available in Bid.`, "error");
+    return null;
   }
 
   function copyText(detail) {
@@ -591,15 +635,19 @@
     if (!window.confirm(`Submit a ${money(bidAmount)} bid to OTS for ${rideId}?`)) return;
     state.submittingBids.add(rideId);
     renderMaster();
-    showNotice(`Submitting ${rideId} to OTS...`);
+    showNotice(`Queuing ${rideId} for OTS submission...`);
     try {
       const result = await request("/api/job-linker/bids", {
         method: "POST",
         body: JSON.stringify({ rideId, bidAmount, reason: reasonInput?.value.trim() || "" })
       });
+      if (result.bid && state.data) {
+        state.data.bids = [result.bid, ...(state.data.bids || []).filter((bid) => bid.rideId !== rideId)];
+      }
       await load();
-      showNotice(result.message || "Bid submitted. Booking outcome is not yet confirmed.");
+      showNotice(result.message || "Bid queued. Waiting for OTS confirmation.");
       setTab("bid");
+      await pollBidStatus(rideId);
     } catch (error) {
       await load().catch(() => {});
       showNotice(error.message, "error");

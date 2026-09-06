@@ -2246,6 +2246,7 @@ function registerShutdownHooks({
   getRetentionCleanupPoller,
   getDatabaseRetentionPoller,
   getJobLinkerService,
+  getJobLinkerBidService,
   sessionPath
 }) {
   let shuttingDown = false;
@@ -2423,6 +2424,11 @@ function registerShutdownHooks({
       jobLinkerService.stop();
     }
 
+    const jobLinkerBidService = typeof getJobLinkerBidService === "function" ? getJobLinkerBidService() : null;
+    if (jobLinkerBidService && typeof jobLinkerBidService.stop === "function") {
+      jobLinkerBidService.stop();
+    }
+
     logger.info("Service stopped", {
       stage: "shutdown",
       reason: sessionPath || ""
@@ -2495,6 +2501,7 @@ async function bootstrap() {
     getRetentionCleanupPoller: () => retentionCleanupPollerRef,
     getDatabaseRetentionPoller: () => databaseRetentionPollerRef,
     getJobLinkerService: () => jobLinkerServiceRef,
+    getJobLinkerBidService: () => jobLinkerBidServiceRef,
     sessionPath: env.whatsappSessionPath
   });
 

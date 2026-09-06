@@ -14,6 +14,7 @@ const { registerJobLinkerRoutes } = require("../../src/jobLinker/routes");
 function trustedReservation(overrides = {}) {
   return {
     bidId: "bid-1",
+    bid: { bidId: "bid-1", rideId: "OTS-1", bidStatus: "Created", submissionState: "created" },
     trustedBid: {
       rideId: "OTS-1",
       source: "OTS",
@@ -26,6 +27,15 @@ function trustedReservation(overrides = {}) {
     },
     ...overrides
   };
+}
+
+async function waitFor(check, timeoutMs = 1000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for asynchronous bid processing");
 }
 
 function serviceRepository(overrides = {}) {
@@ -43,9 +53,11 @@ function serviceRepository(overrides = {}) {
   };
 }
 
-test("manual Job Linker bid submits trusted repository data and persists success", async () => {
+test("manual Job Linker bid returns a durable queued state before provider completion", async () => {
   const submitted = [];
   const completions = [];
+  let releaseProvider;
+  const providerGate = new Promise((resolve) => { releaseProvider = resolve; });
   const repository = serviceRepository({
     completeManualBid: async (value) => {
       completions.push(value);
@@ -56,8 +68,10 @@ test("manual Job Linker bid submits trusted repository data and persists success
     repository,
     submitBid: async (bid) => {
       submitted.push(bid);
+      await providerGate;
       return { success: true, bidAmount: "110", providerReference: "OTS-1" };
-    }
+    },
+    autoStart: false
   });
 
   const result = await service.submitManualBid({
@@ -68,9 +82,14 @@ test("manual Job Linker bid submits trusted repository data and persists success
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.bid.bidStatus, "Submitted");
+  assert.equal(result.bid.bidStatus, "Created");
+  assert.equal(completions.length, 0);
+  await waitFor(() => submitted.length === 1);
   assert.equal(submitted[0].pickup, "Heathrow");
+  releaseProvider();
+  await waitFor(() => completions.length === 1);
   assert.equal(completions[0].success, true);
+  service.stop();
 });
 
 test("manual Job Linker bid persists submitter failure without claiming success", async () => {
@@ -83,16 +102,17 @@ test("manual Job Linker bid persists submitter failure without claiming success"
   });
   const service = createJobLinkerBidService({
     repository,
-    submitBid: async () => { throw new Error("provider page unavailable"); }
+    submitBid: async () => { throw new Error("provider page unavailable"); },
+    autoStart: false
   });
 
-  await assert.rejects(
-    () => service.submitManualBid({ rideId: "OTS-1", bidAmount: 110 }),
-    (error) => error.code === "OTS_SUBMISSION_FAILED" && error.statusCode === 502
-  );
+  const result = await service.submitManualBid({ rideId: "OTS-1", bidAmount: 110 });
+  assert.equal(result.bid.bidStatus, "Created");
+  await waitFor(() => completions.length === 1);
   assert.equal(completions.length, 1);
   assert.equal(completions[0].success, false);
   assert.equal(completions[0].message, "provider page unavailable");
+  service.stop();
 });
 
 test("bid validation rejects invalid amount and non-actionable ride states", () => {
@@ -262,6 +282,42 @@ test("manual bid route returns structured success and duplicate errors", async (
     assert.equal(duplicate.status, 409);
     assert.equal((await duplicate.json()).code, "DUPLICATE_BID");
   });
+});
+
+test("manual bid HTTP response does not wait for the Playwright provider lifecycle", async () => {
+  let releaseProvider;
+  const providerGate = new Promise((resolve) => { releaseProvider = resolve; });
+  const completions = [];
+  const service = createJobLinkerBidService({
+    repository: serviceRepository({
+      completeManualBid: async (value) => {
+        completions.push(value);
+        return { bidId: "bid-1", rideId: "OTS-1", bidStatus: "Submitted" };
+      }
+    }),
+    submitBid: async () => {
+      await providerGate;
+      return { success: true, bidAmount: "110", providerReference: "OTS-1" };
+    },
+    autoStart: false
+  });
+
+  await withServer((request) => { request.dashboardActor = "Operator"; return true; }, service, async (baseUrl) => {
+    const response = await Promise.race([
+      fetch(`${baseUrl}/api/job-linker/bids`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rideId: "OTS-1", bidAmount: 110 })
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("POST waited for provider")), 500))
+    ]);
+    assert.equal(response.status, 201);
+    assert.equal((await response.json()).bid.bidStatus, "Created");
+    assert.equal(completions.length, 0);
+    releaseProvider();
+    await waitFor(() => completions.length === 1);
+  });
+  service.stop();
 });
 
 test("manual bid reservation persists the normalized OTS business reference", async () => {

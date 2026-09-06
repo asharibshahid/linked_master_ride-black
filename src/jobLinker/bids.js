@@ -77,7 +77,118 @@ function createJobLinkerBidService(options = {}) {
   const repository = options.repository;
   const submitBid = options.submitBid;
   const logger = options.logger || { info: () => {}, warn: () => {} };
+  const pollIntervalMs = Math.max(1000, Number(options.pollIntervalMs) || 5000);
+  const staleTimeoutMs = Math.max(60000, Number(options.staleTimeoutMs) || 5 * 60 * 1000);
+  const activeBidIds = new Set();
+  let timer = null;
   if (!repository) throw new Error("Job Linker bid repository is required");
+
+  async function persistCompletion(value) {
+    let lastError;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        return await repository.completeManualBid(value);
+      } catch (error) {
+        lastError = error;
+        if (error?.code === "BID_STATE_CONFLICT") throw error;
+        if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 250));
+      }
+    }
+    throw lastError;
+  }
+
+  async function processReservation(reservation) {
+    try {
+      await repository.markManualBidSubmitting(reservation.bidId);
+      let result;
+      try {
+        result = normalizeSubmitResult(await submitBid(reservation.trustedBid));
+      } catch (error) {
+        const errorDetail = cleanText(error?.message) || "OTS bid submission failed.";
+        await persistCompletion({
+          bidId: reservation.bidId,
+          success: false,
+          bidAmount: reservation.trustedBid.bidAmount,
+          message: publicProviderFailure(errorDetail)
+        });
+        logger.warn("Manual OTS bid failed", {
+          stage: "job_linker_bid",
+          fallbackUsed: true,
+          reason: `${reservation.trustedBid.rideId}: ${errorDetail}`,
+          error
+        });
+        return;
+      }
+      if (!result.success) {
+        await persistCompletion({
+          bidId: reservation.bidId,
+          success: false,
+          bidAmount: reservation.trustedBid.bidAmount,
+          message: publicProviderFailure(result.message || "OTS submitter returned an unsuccessful result.")
+        });
+        return;
+      }
+      await persistCompletion({
+        bidId: reservation.bidId,
+        success: true,
+        bidAmount: result.bidAmount || reservation.trustedBid.bidAmount,
+        providerReference: result.providerReference,
+        message: result.message || "OTS provider confirmed the submission."
+      });
+      logger.info("Manual OTS bid submitted", { stage: "job_linker_bid", reason: reservation.trustedBid.rideId });
+    } catch (error) {
+      if (error?.code === "BID_STATE_CONFLICT") return;
+      logger.warn("Manual OTS bid worker failed", {
+        stage: "job_linker_bid",
+        fallbackUsed: true,
+        reason: `${reservation.trustedBid.rideId}: ${cleanText(error?.message) || "bid_worker_failed"}`,
+        error
+      });
+    } finally {
+      activeBidIds.delete(reservation.bidId);
+    }
+  }
+
+  function enqueue(reservation) {
+    if (!reservation?.bidId || activeBidIds.has(reservation.bidId)) return false;
+    activeBidIds.add(reservation.bidId);
+    setImmediate(() => processReservation(reservation).catch((error) => {
+      logger.warn("Manual OTS bid worker failed", {
+        stage: "job_linker_bid",
+        fallbackUsed: true,
+        reason: error?.message || "bid_worker_failed"
+      });
+    }));
+    return true;
+  }
+
+  async function drain() {
+    if (typeof submitBid !== "function") return;
+    if (typeof repository.failStaleSubmittingBids === "function") {
+      await repository.failStaleSubmittingBids(staleTimeoutMs);
+    }
+    if (typeof repository.listPendingManualBids !== "function") return;
+    const pending = await repository.listPendingManualBids(10);
+    pending.forEach(enqueue);
+  }
+
+  function start() {
+    if (timer) return;
+    timer = setInterval(() => drain().catch((error) => {
+      logger.warn("Manual OTS bid queue check failed", {
+        stage: "job_linker_bid",
+        fallbackUsed: true,
+        reason: error?.message || "bid_queue_check_failed"
+      });
+    }), pollIntervalMs);
+    if (typeof timer.unref === "function") timer.unref();
+    setImmediate(() => drain().catch(() => {}));
+  }
+
+  function stop() {
+    if (timer) clearInterval(timer);
+    timer = null;
+  }
 
   async function submitManualBid(input = {}) {
     const rideId = cleanText(input.rideId);
@@ -86,7 +197,6 @@ function createJobLinkerBidService(options = {}) {
     if (typeof submitBid !== "function") {
       throw bidError("OTS_SUBMITTER_UNAVAILABLE", "OTS bid submission is not configured on the server.", 503);
     }
-
     const reservation = await repository.reserveManualBid({
       rideId,
       bidAmount,
@@ -94,46 +204,16 @@ function createJobLinkerBidService(options = {}) {
       actor: cleanText(input.actor) || "Dashboard",
       now: options.now ? options.now() : new Date()
     });
-
-    await repository.markManualBidSubmitting(reservation.bidId);
-    try {
-      const result = normalizeSubmitResult(await submitBid(reservation.trustedBid));
-      if (!result.success) {
-        throw new Error(result.message || "OTS submitter returned an unsuccessful result.");
-      }
-      const bid = await repository.completeManualBid({
-        bidId: reservation.bidId,
-        success: true,
-        bidAmount: result.bidAmount || bidAmount,
-        providerReference: result.providerReference,
-        message: result.message || "OTS submission completed without provider outcome confirmation."
-      });
-      logger.info("Manual OTS bid submitted", { stage: "job_linker_bid", reason: rideId });
-      return {
-        ok: true,
-        message: "Bid submitted to OTS. Booking outcome is not yet confirmed.",
-        bid
-      };
-    } catch (error) {
-      const errorDetail = cleanText(error?.message) || "OTS bid submission failed.";
-      const message = publicProviderFailure(errorDetail);
-      const bid = await repository.completeManualBid({
-        bidId: reservation.bidId,
-        success: false,
-        bidAmount,
-        message
-      });
-      logger.warn("Manual OTS bid failed", {
-        stage: "job_linker_bid",
-        fallbackUsed: true,
-        reason: `${rideId}: ${errorDetail}`,
-        error
-      });
-      throw bidError("OTS_SUBMISSION_FAILED", message, 502, { bid });
-    }
+    enqueue(reservation);
+    return {
+      ok: true,
+      message: "Bid accepted and queued for OTS submission.",
+      bid: reservation.bid
+    };
   }
 
-  return { submitManualBid };
+  if (options.autoStart !== false) start();
+  return { submitManualBid, drain, start, stop };
 }
 
 module.exports = {

@@ -24,6 +24,10 @@ const jobLinkerMigrationSql = fs.readFileSync(
   path.resolve(__dirname, "../../supabase/migrations/006_job_linker_system.sql"),
   "utf8"
 );
+const otsMasterHotfixSql = fs.readFileSync(
+  path.resolve(__dirname, "../../supabase/migrations/007_ots_master_hotfix.sql"),
+  "utf8"
+);
 const seedSql = fs.readFileSync(path.resolve(__dirname, "../../supabase/seed.sql"), "utf8");
 const packageJson = require("../../package.json");
 
@@ -109,4 +113,13 @@ test("job linker migration adds shared criteria, recoverable trash and source ex
   assert.match(jobLinkerMigrationSql, /interval '12 hours'/);
   assert.match(jobLinkerMigrationSql, /source_jobs_deleted/);
   assert.match(jobLinkerMigrationSql, /status = 'Linker Opportunity'/);
+});
+
+test("OTS Master hotfix stores exact source details and protects bid history", () => {
+  assert.match(otsMasterHotfixSql, /guide_price_min numeric\(12,2\)/);
+  assert.match(otsMasterHotfixSql, /guide_price_max numeric\(12,2\)/);
+  assert.match(otsMasterHotfixSql, /guide_price_text text/);
+  assert.match(otsMasterHotfixSql, /luggage_details text/);
+  assert.match(otsMasterHotfixSql, /source_metadata jsonb/);
+  assert.match(otsMasterHotfixSql, /exists \(\s*select 1\s*from bids b/);
 });

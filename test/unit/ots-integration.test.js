@@ -43,9 +43,27 @@ test("mapOtsRowToRide converts formatted OTS rows into dispatch ride schema", ()
   assert.equal(ride.pickup, "LHR T5");
   assert.equal(ride.drop_off, "Chelsea London");
   assert.equal(ride.distance, "19");
-  assert.equal(ride.fare, "120");
+  assert.equal(ride.fare, "");
   assert.equal(ride.required_vehicle, "MPV");
   assert.equal(ride.payment_status, "OTS");
+});
+
+test("OTS mapping preserves exact source guide range and never displays synthetic estimate as fare", () => {
+  const ride = mapOtsRowToRide({
+    ...OTS_ROW,
+    est_fare: "£244.00",
+    guide_price_min: "£1,158.00",
+    guide_price_max: "£1,186.00",
+    guide_price_text: "As a guide, we are expecting prices between £1,158.00 and £1,186.00.",
+    passenger_count: 1,
+    luggage_text: "Suitcases"
+  });
+  assert.equal(ride.fare, "1158");
+  assert.equal(ride.guide_price_min, 1158);
+  assert.equal(ride.guide_price_max, 1186);
+  assert.equal(ride.passenger_count, "1");
+  assert.equal(ride.luggage_details, "Suitcases");
+  assert.equal(ride.source_metadata.guidePriceText, ride.guide_price_text);
 });
 
 test("OTS offer expiry parses portal text even when 24-hour time includes am or pm", () => {

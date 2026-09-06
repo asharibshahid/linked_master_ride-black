@@ -20,6 +20,12 @@ function mapJob(row = {}) {
     distance: text(row.distance),
     fare: row.fare === null || row.fare === undefined ? null : Number(row.fare),
     requiredVehicle: text(row.required_vehicle),
+    passengerCount: text(row.passenger_count),
+    luggageDetails: text(row.luggage_details),
+    guidePriceMin: row.guide_price_min === null || row.guide_price_min === undefined ? null : Number(row.guide_price_min),
+    guidePriceMax: row.guide_price_max === null || row.guide_price_max === undefined ? null : Number(row.guide_price_max),
+    guidePriceText: text(row.guide_price_text),
+    sourceMetadata: row.source_metadata && typeof row.source_metadata === "object" ? row.source_metadata : {},
     pickupAt: row.pickup_at ? new Date(row.pickup_at).toISOString() : null,
     expiresAt: row.source_expires_at ? new Date(row.source_expires_at).toISOString() : null,
     status: text(row.status),
@@ -58,6 +64,11 @@ function mapWorkspaceBid(row = {}) {
     requiredVehicle: text(row.required_vehicle),
     distance: text(row.distance),
     originalFare: row.fare === null || row.fare === undefined ? null : Number(row.fare),
+    passengerCount: text(row.passenger_count),
+    luggageDetails: text(row.luggage_details),
+    guidePriceMin: row.guide_price_min === null || row.guide_price_min === undefined ? null : Number(row.guide_price_min),
+    guidePriceMax: row.guide_price_max === null || row.guide_price_max === undefined ? null : Number(row.guide_price_max),
+    guidePriceText: text(row.guide_price_text),
     bidAmount: row.bid_amount === null || row.bid_amount === undefined ? null : Number(row.bid_amount),
     reason: text(row.reason),
     bidStatus: text(row.bid_status),
@@ -73,7 +84,8 @@ function mapWorkspaceBid(row = {}) {
 async function loadWorkspaceBidById(client, bidId) {
   const result = await client.query(
     `select b.*, r.refer as ride_refer, r.source_type, r.source_name, r.pickup_day_date, r.starting_timing,
-            r.pickup_at, r.pickup, r.drop_off, r.required_vehicle, r.distance, r.fare
+            r.pickup_at, r.pickup, r.drop_off, r.required_vehicle, r.distance, r.fare,
+            r.passenger_count, r.luggage_details, r.guide_price_min, r.guide_price_max, r.guide_price_text
        from bids b
        left join rides r on r.ride_id = b.ride_id
       where b.bid_id = $1 and b.deleted_at is null
@@ -139,11 +151,18 @@ function prepareSourceJob(job = {}, sourceType = "OTS", rawCriteria = {}, now = 
     distance: text(job.distance),
     fare: job.fare === "" || job.fare === null || job.fare === undefined ? null : Number(job.fare),
     requiredVehicle: text(job.required_vehicle || job.requiredVehicle),
+    passengerCount: text(job.passenger_count || job.passengerCount),
+    luggageDetails: text(job.luggage_details || job.luggageDetails),
+    guidePriceMin: job.guide_price_min === null || job.guide_price_min === undefined ? null : Number(job.guide_price_min),
+    guidePriceMax: job.guide_price_max === null || job.guide_price_max === undefined ? null : Number(job.guide_price_max),
+    guidePriceText: text(job.guide_price_text || job.guidePriceText),
+    sourceMetadata: job.source_metadata && typeof job.source_metadata === "object" ? job.source_metadata : {},
     paymentStatus: text(job.payment_status),
     pickupAt,
     expiresAt: expiresAt.toISOString()
   };
-  return evaluateJob(prepared, criteria).eligible ? prepared : null;
+  if (!prepared.pickup || !prepared.dropOff) return null;
+  return cleanSource === "OTS" || evaluateJob(prepared, criteria).eligible ? prepared : null;
 }
 
 class JobLinkerRepository {
@@ -250,6 +269,7 @@ class JobLinkerRepository {
     return this.withClient(async (client) => {
       await client.query("begin");
       let count = 0;
+      const exclusionReasons = {};
       try {
         const criteriaResult = await client.query(
           "select value from system_settings where setting_key = 'job_linker_criteria' limit 1"
@@ -257,21 +277,30 @@ class JobLinkerRepository {
         const criteria = normalizeCriteria(criteriaResult.rows[0]?.value || DEFAULT_JOB_LINKER_CRITERIA);
         for (const job of jobs) {
           const prepared = prepareSourceJob(job, cleanSource, criteria);
-          if (!prepared) continue;
+          if (!prepared) {
+            exclusionReasons.invalid_or_expired_core_record = (exclusionReasons.invalid_or_expired_core_record || 0) + 1;
+            continue;
+          }
           await client.query(
             `insert into rides (
                ride_id, refer, source_type, group_name, source_name, source_time,
                pickup_day_date, starting_timing, pickup, drop_off, distance, fare,
-               required_vehicle, payment_status, pickup_at, status, retention_class, source_expires_at
-             ) values ($1,$1,$2,$3,$4,now(),$5,$6,$7,$8,$9,$10,$11,$12,$13,'New','operational',$14)
+               required_vehicle, payment_status, pickup_at, status, retention_class, source_expires_at,
+               passenger_count, luggage_details, guide_price_min, guide_price_max, guide_price_text, source_metadata
+             ) values ($1,$1,$2,$3,$4,now(),$5,$6,$7,$8,$9,$10,$11,$12,$13,'New','operational',$14,$15,$16,$17,$18,$19,$20::jsonb)
              on conflict (ride_id) do update set
                source_type = excluded.source_type, group_name = excluded.group_name,
                source_name = excluded.source_name, source_time = excluded.source_time,
                pickup_day_date = excluded.pickup_day_date, starting_timing = excluded.starting_timing,
-               pickup = excluded.pickup, drop_off = excluded.drop_off, distance = excluded.distance,
+               pickup = excluded.pickup, drop_off = excluded.drop_off,
+               distance = coalesce(nullif(excluded.distance, ''), rides.distance),
                fare = excluded.fare, required_vehicle = excluded.required_vehicle,
                payment_status = excluded.payment_status, pickup_at = excluded.pickup_at,
-               source_expires_at = excluded.source_expires_at`,
+               source_expires_at = excluded.source_expires_at,
+               passenger_count = excluded.passenger_count, luggage_details = excluded.luggage_details,
+               guide_price_min = excluded.guide_price_min, guide_price_max = excluded.guide_price_max,
+               guide_price_text = excluded.guide_price_text, source_metadata = excluded.source_metadata,
+               deleted_at = null`,
             [
               prepared.rideId,
               prepared.sourceType,
@@ -286,13 +315,19 @@ class JobLinkerRepository {
               prepared.requiredVehicle,
               prepared.paymentStatus,
               prepared.pickupAt,
-              prepared.expiresAt
+              prepared.expiresAt,
+              prepared.passengerCount,
+              prepared.luggageDetails,
+              prepared.guidePriceMin,
+              prepared.guidePriceMax,
+              prepared.guidePriceText,
+              JSON.stringify(prepared.sourceMetadata || {})
             ]
           );
           count += 1;
         }
         await client.query("commit");
-        return { ok: true, count };
+        return { ok: true, seen: jobs.length, count, excluded: jobs.length - count, exclusionReasons };
       } catch (error) {
         await client.query("rollback");
         throw error;
@@ -313,11 +348,26 @@ class JobLinkerRepository {
     });
   }
 
+  async expireMissingOtsJobs(activeRideIds = []) {
+    const ids = [...new Set(activeRideIds.map(text).filter(Boolean))];
+    return this.withClient(async (client) => {
+      const result = await client.query(
+        `update rides set source_expires_at = now()
+          where source_type = 'OTS' and deleted_at is null
+            and not (ride_id = any($1::text[]))
+            and (source_expires_at is null or source_expires_at > now())`,
+        [ids]
+      );
+      return { ok: true, affected: result.rowCount };
+    });
+  }
+
   async listBids() {
     return this.withClient(async (client) => {
       const result = await client.query(
         `select b.*, r.refer as ride_refer, r.source_type, r.source_name, r.pickup_day_date, r.starting_timing,
-                r.pickup_at, r.pickup, r.drop_off, r.required_vehicle, r.distance, r.fare
+                r.pickup_at, r.pickup, r.drop_off, r.required_vehicle, r.distance, r.fare,
+                r.passenger_count, r.luggage_details, r.guide_price_min, r.guide_price_max, r.guide_price_text
            from bids b
            left join rides r on r.ride_id = b.ride_id
           where b.deleted_at is null
@@ -325,6 +375,63 @@ class JobLinkerRepository {
           limit 1000`
       );
       return result.rows.map(mapWorkspaceBid);
+    });
+  }
+
+  async listPendingManualBids(limit = 10) {
+    const safeLimit = Math.max(1, Math.min(50, Number(limit) || 10));
+    return this.withClient(async (client) => {
+      const result = await client.query(
+        `select b.*, r.refer as ride_refer, r.source_type, r.source_name,
+                r.pickup_day_date, r.starting_timing, r.pickup_at, r.pickup, r.drop_off,
+                r.required_vehicle, r.distance, r.fare, r.passenger_count, r.luggage_details,
+                r.guide_price_min, r.guide_price_max, r.guide_price_text
+           from bids b
+           join rides r on r.ride_id = b.ride_id
+          where b.deleted_at is null and b.bid_status = 'Created'
+            and coalesce(b.pricing_payload, '{}'::jsonb) @> '{"jobLinkerManualBid":true}'::jsonb
+          order by b.created_at asc
+          limit $1`,
+        [safeLimit]
+      );
+      return result.rows.map((row) => ({
+        bidId: text(row.bid_id),
+        bid: mapWorkspaceBid(row),
+        trustedBid: {
+          rideId: text(row.ride_id),
+          source: "OTS",
+          pickup: text(row.pickup),
+          dropOff: text(row.drop_off),
+          fare: row.fare === null || row.fare === undefined ? "" : String(row.fare),
+          requiredVehicle: text(row.required_vehicle),
+          bidType: "Job Linker Manual Bid",
+          bidAmount: row.bid_amount === null || row.bid_amount === undefined ? "" : String(row.bid_amount)
+        }
+      }));
+    });
+  }
+
+  async failStaleSubmittingBids(maxAgeMs = 5 * 60 * 1000) {
+    const seconds = Math.max(60, Math.ceil(Number(maxAgeMs) / 1000));
+    return this.withClient(async (client) => {
+      const completedAt = new Date().toISOString();
+      const metadata = {
+        submission: {
+          state: "failed",
+          completedAt,
+          message: "Provider submission timed out before a confirmed result. No automatic retry was attempted."
+        }
+      };
+      const result = await client.query(
+        `update bids
+            set bid_status = 'Submission Failed',
+                pricing_payload = coalesce(pricing_payload, '{}'::jsonb) || $2::jsonb,
+                updated_at = now()
+          where deleted_at is null and bid_status = 'Submitting'
+            and updated_at < now() - ($1::text || ' seconds')::interval`,
+        [seconds, JSON.stringify(metadata)]
+      );
+      return { ok: true, affected: result.rowCount };
     });
   }
 
@@ -382,6 +489,7 @@ class JobLinkerRepository {
                returning *`,
               [cleanRideId, bidAmount, text(reason), JSON.stringify(metadata)]
             );
+        await client.query("update rides set is_protected = true where ride_id = $1", [cleanRideId]);
         await client.query("commit");
         return {
           bidId: text(inserted.rows[0].bid_id),

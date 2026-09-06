@@ -37,6 +37,13 @@ function normalizeNumberText(value) {
   return match ? match[0] : text;
 }
 
+function normalizeMoney(value) {
+  const text = toCell(value).replace(/[£,\s\u00a0]/g, "");
+  if (!text) return null;
+  const number = Number(text);
+  return Number.isFinite(number) ? Math.round(number * 100) / 100 : null;
+}
+
 function parseOtsExpiry(row = {}) {
   const direct = pickFirst(row, ["expires_utc_iso", "expiresUtcIso", "offer_expires_at"]);
   if (direct) {
@@ -57,6 +64,12 @@ function parseOtsExpiry(row = {}) {
 }
 
 function mapOtsRowToRide(row = {}, options = {}) {
+  const guidePriceMin = normalizeMoney(pickFirst(row, ["guide_price_min", "guidePriceMin"]));
+  const guidePriceMax = normalizeMoney(pickFirst(row, ["guide_price_max", "guidePriceMax"]));
+  const guidePriceText = pickFirst(row, ["guide_price_text", "guidePriceText"]);
+  const passengerCount = normalizeNumberText(pickFirst(row, ["passenger_count", "passengerCount"]));
+  const passengerLuggageText = pickFirst(row, ["passenger_luggage_text", "passengerLuggageText"]);
+  const luggageDetails = pickFirst(row, ["luggage_text", "luggageDetails"]);
   const ride = createEmptyRideObject({
     refer: pickFirst(row, ["refer", "Refer", "reference", "Reference"]),
     group_name: options.groupName || DEFAULT_GROUP_NAME,
@@ -79,7 +92,9 @@ function mapOtsRowToRide(row = {}, options = {}) {
     distance: normalizeNumberText(
       pickFirst(row, ["distance", "distance_miles", "Distance"])
     ),
-    fare: normalizeNumberText(pickFirst(row, ["fare", "est_fare", "Fare"])),
+    fare: guidePriceMin === null
+      ? normalizeNumberText(pickFirst(row, ["fare", "Fare"]))
+      : String(guidePriceMin),
     required_vehicle: pickFirst(row, [
       "required_vehicle",
       "requiredVehicle",
@@ -88,6 +103,25 @@ function mapOtsRowToRide(row = {}, options = {}) {
     payment_status: pickFirst(row, ["payment_status", "Payment Status"], "OTS")
   });
   ride.source_expires_at = parseOtsExpiry(row);
+  ride.guide_price_min = guidePriceMin;
+  ride.guide_price_max = guidePriceMax;
+  ride.guide_price_text = guidePriceText;
+  ride.passenger_count = passengerCount;
+  ride.luggage_details = luggageDetails;
+  ride.source_metadata = {
+    otsReference: ride.refer,
+    pickup: ride.pickup,
+    dropOff: ride.drop_off,
+    pickupDayDate: ride.pickup_day_date,
+    startingTiming: ride.starting_timing,
+    vehicle: ride.required_vehicle,
+    passengerCount,
+    passengerLuggageText,
+    luggageDetails,
+    guidePriceMin,
+    guidePriceMax,
+    guidePriceText
+  };
   return ride;
 }
 
@@ -392,6 +426,7 @@ module.exports = {
   DEFAULT_GROUP_NAME,
   DEFAULT_SOURCE_NAME,
   mapOtsRowToRide,
+  normalizeMoney,
   parseOtsExpiry,
   getMissingRequiredFields,
   buildOtsDedupeKey,

@@ -3,6 +3,7 @@ const { createRoutingResolver, findLinkedRideOpportunities } = require("./linker
 const { loadPrebookJobs } = require("./prebook");
 const { syncOtsMaster } = require("./otsMaster");
 const { loadWhatsAppSheetJobs } = require("./whatsappSheets");
+const { formatOtsCopyDetail } = require("./detailFormatter");
 
 function newestFirst(left, right) {
   const leftTime = new Date(left.sourceTime || left.createdAt || 0).getTime();
@@ -27,6 +28,11 @@ function createJobLinkerService(options = {}) {
     otsEnabled: Boolean(options.otsEnabled),
     otsLastError: "",
     otsRowsImported: 0,
+    otsRowsSeen: 0,
+    otsRowsExcluded: 0,
+    otsExclusionReasons: {},
+    otsRowsRemoved: 0,
+    otsSourceComplete: false,
     whatsappSheetMode: "off",
     whatsappSheetEnabled: Boolean(options.whatsappSheetsClient && options.whatsappSpreadsheetId),
     whatsappSheetMessage: "WhatsApp source sheets are not configured.",
@@ -50,7 +56,7 @@ function createJobLinkerService(options = {}) {
         evaluation: job.sourceType === "PreBook" ? evaluatePrebookJob(job) : evaluateJob(job, criteria)
       }));
       const ineligibleSourceIds = evaluated
-        .filter((job) => ["OTS", "WhatsApp"].includes(job.sourceType) && !job.evaluation.eligible)
+        .filter((job) => job.sourceType === "WhatsApp" && !job.evaluation.eligible)
         .map((job) => job.rideId);
       if (typeof repository.expireSourceJobs === "function") {
         await repository.expireSourceJobs(ineligibleSourceIds);
@@ -87,6 +93,11 @@ function createJobLinkerService(options = {}) {
             state.otsLastSyncAt = new Date().toISOString();
             state.otsLastError = "";
             state.otsRowsImported = ots.imported;
+            state.otsRowsSeen = ots.seen;
+            state.otsRowsExcluded = ots.excluded || 0;
+            state.otsExclusionReasons = ots.exclusionReasons || {};
+            state.otsRowsRemoved = ots.removed || 0;
+            state.otsSourceComplete = ots.sourceComplete === true;
             if (ots.imported > 0) {
               logger.info("OTS Master synchronized", {
                 stage: "ots_master",
@@ -187,9 +198,21 @@ function createJobLinkerService(options = {}) {
       repository.listJobs({ includeTrash: true }),
       typeof repository.listBids === "function" ? repository.listBids() : []
     ]);
-    const enriched = jobs.map((job) => ({
-      ...job,
-      ...(job.sourceType === "PreBook" ? evaluatePrebookJob(job) : evaluateJob(job, criteria))
+    const enriched = jobs.map((job) => {
+      const evaluation = job.sourceType === "PreBook" ? evaluatePrebookJob(job) : evaluateJob(job, criteria);
+      if (job.sourceType !== "OTS") return { ...job, ...evaluation };
+      return {
+        ...job,
+        eligible: true,
+        reason: "Live OTS quotation",
+        linkerEligible: evaluation.eligible,
+        linkerReason: evaluation.reason,
+        copyDetail: formatOtsCopyDetail(job, { timeZone: options.timeZone || "Europe/London" })
+      };
+    });
+    const decoratedBids = bids.map((bid) => ({
+      ...bid,
+      copyDetail: formatOtsCopyDetail(bid, { timeZone: options.timeZone || "Europe/London" })
     }));
     return {
       ok: true,
@@ -200,7 +223,7 @@ function createJobLinkerService(options = {}) {
       prebook: enriched.filter((job) => job.sourceType === "PreBook").sort(newestFirst),
       groups: enriched.filter((job) => job.sourceType === "WhatsApp").sort(newestFirst),
       links,
-      bids,
+      bids: decoratedBids,
       trash,
       sourceStatus: { ...state }
     };

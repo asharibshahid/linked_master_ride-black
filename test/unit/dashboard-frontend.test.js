@@ -32,6 +32,16 @@ test("Bid tab renders persisted bids and Master uses the guarded endpoint", () =
   assert.match(script, /state\.data\?\.bids/);
   assert.match(script, /function renderBids\(\)/);
   assert.doesNotMatch(script, /fake|mock bid|bidTabData/i);
+  assert.match(script, /pollBidStatus\(rideId\)/);
+  assert.match(script, /BID_POLL_TIMEOUT_MS/);
+  assert.match(script, /terminalBidStatus/);
+});
+
+test("Master displays source guide prices and both copy actions use backend copyDetail", () => {
+  assert.match(script, /function guidePrice\(job/);
+  assert.match(script, /job\.guidePriceMin/);
+  assert.match(script, /if \(job\.copyDetail\) return job\.copyDetail/);
+  assert.doesNotMatch(script, /const bidValue = existingBid\?\.bidAmount \?\? numeric\(job\.fare\)/);
 });
 
 test("Master recommendation renders only persisted Linker facts", () => {

@@ -299,7 +299,7 @@ test("PreBook loader supports the client Bookings sheet and excludes cancelled o
   assert.equal(result.jobs[0].distance, "19");
 });
 
-test("source import keeps only formula-eligible jobs inside the retention window", () => {
+test("OTS Master import keeps all valid live jobs independent of Linker criteria", () => {
   const source = {
     refer: "OTS-LIVE-1",
     pickup_day_date: "Tuesday 1st September 2026",
@@ -332,7 +332,9 @@ test("source import keeps only formula-eligible jobs inside the retention window
     new Date("2026-08-30T12:00:00.000Z")
   ), null);
 
-  assert.equal(prepareSourceJob({ ...source, fare: 60 }, "OTS", DEFAULT_JOB_LINKER_CRITERIA), null);
+  const importTime = new Date("2026-08-30T12:00:00.000Z");
+  assert.equal(prepareSourceJob({ ...source, fare: 60 }, "OTS", DEFAULT_JOB_LINKER_CRITERIA, importTime).fare, 60);
+  assert.equal(prepareSourceJob({ ...source, pickup: "Glasgow", required_vehicle: "Coach" }, "OTS", DEFAULT_JOB_LINKER_CRITERIA, importTime).pickup, "Glasgow");
   assert.equal(
     prepareSourceJob(source, "OTS", DEFAULT_JOB_LINKER_CRITERIA, new Date("2026-09-02T00:00:00.000Z")),
     null
