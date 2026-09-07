@@ -97,6 +97,16 @@
     return job.pickupAt ? formatUkDateTime(job.pickupAt) : [job.pickupDayDate, job.startingTiming].filter(Boolean).join(", ") || "Date missing";
   }
 
+  function otsSyncSummary(source = {}) {
+    const seen = Number(source.otsRowsSeen || 0);
+    const accepted = Number(source.otsRowsImported || 0);
+    const added = Number(source.otsRowsAdded || 0);
+    const updated = Number(source.otsRowsUpdated || Math.max(0, accepted - added));
+    const removed = Number(source.otsRowsRemoved || 0);
+    const last = source.otsLastSyncAt ? formatUkDateTime(source.otsLastSyncAt) : "Waiting";
+    return `Last OTS update: ${last}. Source loaded: ${accepted} of ${seen || accepted}. New added: ${added}. Updated: ${updated}. Removed/deleted from Master: ${removed}.`;
+  }
+
   function londonDateKey(value = new Date()) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return "";
@@ -398,11 +408,11 @@
     const ready = Boolean(source.otsEnabled && source.otsLastSyncAt && !failed);
     const banner = $("#master-source-banner");
     banner.classList.toggle("source-error", failed);
-    banner.innerHTML = `<div><strong>${failed ? "OTS source needs attention" : ready ? "Live OTS source connected" : source.otsEnabled ? "OTS source is starting" : "OTS source is not configured"}</strong><span>${failed ? esc(source.otsLastError) : ready ? `${Number(source.otsRowsImported || 0)} of ${Number(source.otsRowsSeen || source.otsRowsImported || 0)} live rows synchronized at ${esc(formatUkDateTime(source.otsLastSyncAt))}.` : "Master displays the complete live OTS inventory after source synchronization."}</span></div><span class="status-pill ${ready ? "" : failed ? "bad" : "warn"}">${ready ? "Live" : failed ? "Error" : "Waiting"}</span>`;
+    banner.innerHTML = `<div><strong>${failed ? "OTS source needs attention" : ready ? "Live OTS source connected" : source.otsEnabled ? "OTS source is starting" : "OTS source is not configured"}</strong><span>${failed ? esc(source.otsLastError) : ready ? esc(otsSyncSummary(source)) : "Master displays the complete live OTS inventory after source synchronization."}</span></div><span class="status-pill ${ready ? "" : failed ? "bad" : "warn"}">${ready ? "Live" : failed ? "Error" : "Waiting"}</span>`;
     const rows = filteredMaster();
     const linkedCount = rows.filter((job) => linkForJob(job.rideId)).length;
     const fareValue = rows.reduce((total, job) => total + (numeric(job.guidePriceMin) || 0), 0);
-    $("#master-summary").innerHTML = `<div class="stat"><strong>${rows.length}</strong><span>Jobs shown</span></div><div class="stat"><strong>${linkedCount}</strong><span>Linked opportunities</span></div><div class="stat"><strong>${money(fareValue)}</strong><span>Visible guide minimum</span></div>`;
+    $("#master-summary").innerHTML = `<div class="stat"><strong>${rows.length}</strong><span>Jobs shown</span></div><div class="stat"><strong>${Number(source.otsRowsAdded || 0)}</strong><span>New OTS rides last sync</span></div><div class="stat"><strong>${Number(source.otsRowsRemoved || 0)}</strong><span>Removed/deleted last sync</span></div><div class="stat"><strong>${linkedCount}</strong><span>Linked opportunities</span></div><div class="stat"><strong>${money(fareValue)}</strong><span>Visible guide minimum</span></div>`;
     renderJobColumns("master", rows);
   }
 
@@ -508,7 +518,7 @@
     });
     const source = state.data?.sourceStatus || {};
     $("#source-health").innerHTML = [
-      healthRow("OTS Master", source.otsLastError ? source.otsLastError : `${Number(source.otsRowsImported || 0)} rows - automatic sync`, source.otsLastError ? "bad" : ""),
+      healthRow("OTS Master", source.otsLastError ? source.otsLastError : otsSyncSummary(source), source.otsLastError ? "bad" : ""),
       healthRow("WhatsApp sheets", source.whatsappSheetLastError ? source.whatsappSheetLastError : `${Number(source.whatsappSheetCount || 0)} eligible jobs`, source.whatsappSheetLastError ? "bad" : ""),
       healthRow("PreBook", source.prebookLastError || source.prebookMessage || source.prebookMode || "Waiting", source.prebookLastError ? "bad" : source.prebookMode === "demo" ? "warn" : ""),
       healthRow("Linker", source.linkerLastError || `${Number(source.linkCount ?? state.data?.links?.length ?? 0)} current matches`, source.linkerLastError ? "bad" : ""),

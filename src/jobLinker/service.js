@@ -28,6 +28,8 @@ function createJobLinkerService(options = {}) {
     otsEnabled: Boolean(options.otsEnabled),
     otsLastError: "",
     otsRowsImported: 0,
+    otsRowsAdded: 0,
+    otsRowsUpdated: 0,
     otsRowsSeen: 0,
     otsRowsExcluded: 0,
     otsExclusionReasons: {},
@@ -93,6 +95,8 @@ function createJobLinkerService(options = {}) {
             state.otsLastSyncAt = new Date().toISOString();
             state.otsLastError = "";
             state.otsRowsImported = ots.imported;
+            state.otsRowsAdded = ots.added || 0;
+            state.otsRowsUpdated = ots.updated || Math.max(0, (ots.imported || 0) - state.otsRowsAdded);
             state.otsRowsSeen = ots.seen;
             state.otsRowsExcluded = ots.excluded || 0;
             state.otsExclusionReasons = ots.exclusionReasons || {};

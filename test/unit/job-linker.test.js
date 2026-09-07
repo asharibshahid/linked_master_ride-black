@@ -46,6 +46,18 @@ test("complete empty OTS inventory is allowed to reconcile stale Master jobs", (
   assert.doesNotMatch(source, /sourceComplete && rows\.length > 0/);
 });
 
+test("OTS Master exposes added, updated and removed sync counts", () => {
+  const master = fs.readFileSync(path.join(__dirname, "../../src/jobLinker/otsMaster.js"), "utf8");
+  const service = fs.readFileSync(path.join(__dirname, "../../src/jobLinker/service.js"), "utf8");
+  const repository = fs.readFileSync(path.join(__dirname, "../../src/jobLinker/repository.js"), "utf8");
+  assert.match(repository, /let added = 0/);
+  assert.match(repository, /returning \(xmax = '0'::xid\) as inserted/);
+  assert.match(master, /added: imported\.added \|\| 0/);
+  assert.match(master, /updated: imported\.updated \|\| 0/);
+  assert.match(service, /otsRowsAdded: 0/);
+  assert.match(service, /state\.otsRowsRemoved = ots\.removed \|\| 0/);
+});
+
 const TEST_COORDINATES = Object.freeze({
   "Heathrow Airport Terminal 5": { lat: 51.47, lng: -0.4543 },
   "Heathrow Airport": { lat: 51.47, lng: -0.4543 },

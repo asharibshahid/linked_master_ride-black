@@ -22,7 +22,7 @@ The dashboard is one dark charcoal/amber operational UI with six tabs:
 
 The client frontend is a clean static Vercel app in `dashboard/` and reads real data from `GET /api/job-linker`. It has no Driver, Fleet, Guide, fake OTS account, or in-memory demo screens. Lists are searchable, selectable, grouped by vehicle, and paginated at 24 rows. Source lists default to pickup date ascending and then pickup time ascending. Operational datetimes display as `Fri, 03 Sept 2027, 05:00 am`. Master supports Upcoming (current UK week), Future, GBP 100+, custom/quick date ranges, mileage, vehicle, fare, and alternate sorting. Manual deletion moves jobs to Trash for 24 hours before permanent deletion.
 
-Master, PreBook, Groups, and Linker show their own backend source state. A failed or still-starting source is never labelled live, and client responses do not expose raw server paths or stack traces.
+Master, PreBook, Groups, and Linker show their own backend source state. Master shows the last OTS update time plus source-loaded, newly-added, updated, and removed/deleted counts from the last complete sync. A failed or still-starting source is never labelled live, and client responses do not expose raw server paths or stack traces.
 
 ## Manual Bid Flow
 
@@ -91,7 +91,7 @@ The prior ride extraction, Sheets backup, Final Bid, recommendation, schedules, 
 
 ## Verification
 
-- Full automated suite: 272 unit tests and 5 smoke tests passing.
+- Full automated suite: 274 unit tests and 5 smoke tests passing.
 - `npm run check` passes.
 - Eight frontend contract tests cover final navigation, real API wiring, persisted Bid polling, exact source guide/copy fields, backend Linker facts, source failure states, truthful Bid counters, responsive card structure, and encoding safety.
 - The operator's separately controlled real OTS bid test passed through local OTS: exact reference `OTS-06092026155015-32030-1`, bid amount `GBP 125`, OTS displayed persistent `Price Sent` confirmation after reload. Automated tests never submit a real provider bid.

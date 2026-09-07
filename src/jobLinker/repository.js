@@ -274,6 +274,7 @@ class JobLinkerRepository {
     return this.withClient(async (client) => {
       await client.query("begin");
       let count = 0;
+      let added = 0;
       const exclusionReasons = {};
       try {
         const criteriaResult = await client.query(
@@ -286,7 +287,7 @@ class JobLinkerRepository {
             exclusionReasons.invalid_or_expired_core_record = (exclusionReasons.invalid_or_expired_core_record || 0) + 1;
             continue;
           }
-          await client.query(
+          const write = await client.query(
             `insert into rides (
                ride_id, refer, source_type, group_name, source_name, source_time,
                pickup_day_date, starting_timing, pickup, drop_off, distance, fare,
@@ -305,7 +306,8 @@ class JobLinkerRepository {
                passenger_count = excluded.passenger_count, luggage_details = excluded.luggage_details,
                guide_price_min = excluded.guide_price_min, guide_price_max = excluded.guide_price_max,
                guide_price_text = excluded.guide_price_text, source_metadata = excluded.source_metadata,
-               deleted_at = null`,
+               deleted_at = null
+             returning (xmax = '0'::xid) as inserted`,
             [
               prepared.rideId,
               prepared.sourceType,
@@ -330,9 +332,10 @@ class JobLinkerRepository {
             ]
           );
           count += 1;
+          if (write.rows?.[0]?.inserted === true || write.rows?.[0]?.inserted === "t") added += 1;
         }
         await client.query("commit");
-        return { ok: true, seen: jobs.length, count, excluded: jobs.length - count, exclusionReasons };
+        return { ok: true, seen: jobs.length, count, added, updated: count - added, excluded: jobs.length - count, exclusionReasons };
       } catch (error) {
         await client.query("rollback");
         throw error;

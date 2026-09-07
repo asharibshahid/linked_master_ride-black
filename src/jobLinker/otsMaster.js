@@ -47,6 +47,8 @@ async function syncOtsMaster(options = {}) {
     ok: true,
     seen: rows.length,
     imported: imported.count,
+    added: imported.added || 0,
+    updated: imported.updated || 0,
     excluded: imported.excluded || 0,
     exclusionReasons: imported.exclusionReasons || {},
     removed: removed.affected || 0,

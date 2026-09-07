@@ -90,3 +90,12 @@ test("failed and unconfirmed submission attempts remain retryable from Master", 
   assert.match(block, /"submission unconfirmed"/);
   assert.doesNotMatch(block, /"submitted"/);
 });
+
+test("Master shows OTS freshness, additions and removals", () => {
+  assert.match(script, /function otsSyncSummary\(source/);
+  assert.match(script, /Last OTS update/);
+  assert.match(script, /source\.otsRowsAdded/);
+  assert.match(script, /source\.otsRowsRemoved/);
+  assert.match(script, /New OTS rides last sync/);
+  assert.match(script, /Removed\/deleted last sync/);
+});
