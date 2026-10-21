@@ -42,7 +42,15 @@ function detectNumericDateOrder(rows = []) {
 
 function normalizePrebookRow(row = {}, index = 0, options = {}) {
   const date = read(row, PREBOOK_HEADERS.date);
-  const time = read(row, PREBOOK_HEADERS.time);
+  const formattedTime = read(row, PREBOOK_HEADERS.time);
+  const rawTime = typeof options.rawTime === "number" ? options.rawTime : null;
+  const durationMinutes = rawTime !== null && Number.isFinite(rawTime) && rawTime >= 0 && rawTime < 2
+    ? Math.round(rawTime * 1440)
+    : null;
+  const recoveredTime = durationMinutes === null
+    ? ""
+    : `${String(Math.floor(durationMinutes / 60)).padStart(2, "0")}:${String(durationMinutes % 60).padStart(2, "0")}`;
+  const time = recoveredTime || formattedTime;
   const parsed = parsePickupDateTime(date, time, {
     timeZone: options.timeZone || "Europe/London",
     numericDateOrder: options.numericDateOrder || "dmy"
@@ -119,10 +127,22 @@ async function loadPrebookJobs(options = {}) {
   const expiryHours = Math.max(1, Number(options.expireAfterPickupHours) || 12);
   const records = rowsToRecords(response.data.values || []);
   const numericDateOrder = detectNumericDateOrder(records);
+  let rawRows = [];
+  if (records.length > 0) {
+    const rawResponse = await options.sheetsClient.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${worksheetName.replace(/'/g, "''")}'`,
+      valueRenderOption: "UNFORMATTED_VALUE"
+    });
+    rawRows = rawResponse.data.values || [];
+  }
+  const timeHeaderIndex = (response.data.values?.[0] || []).findIndex((header) =>
+    PREBOOK_HEADERS.time.some((name) => name.toLowerCase() === text(header).toLowerCase()));
   const jobs = records
     .map((row, index) => normalizePrebookRow(row, index, {
       timeZone: options.timeZone,
-      numericDateOrder
+      numericDateOrder,
+      rawTime: timeHeaderIndex >= 0 ? rawRows[index + 1]?.[timeHeaderIndex] : undefined
     }))
     .filter((job) => job.rideId && !CLOSED_STATUSES.test(job.status))
     .filter((job) => !job.pickupAt || new Date(job.pickupAt).getTime() + expiryHours * 3600000 > now.getTime());

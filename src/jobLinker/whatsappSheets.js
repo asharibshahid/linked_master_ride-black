@@ -10,6 +10,7 @@ const WHATSAPP_SHEET_HEADERS = Object.freeze({
   dropOff: ["Drop Off", "Dropoff", "Drop", "Destination", "To"],
   distance: ["Distance", "Miles", "Distance Miles"],
   fare: ["Fare", "Price", "Cost", "Net Fare"],
+  vehicle: ["Required Vehicle", "Vehicle", "Vehicle Type"],
   paymentStatus: ["Payment Status", "Payment"],
   refer: ["Refer", "Reference", "Ride ID", "Job ID"]
 });
@@ -60,6 +61,7 @@ function normalizeWhatsAppSheetRow(row = {}, worksheetName = "Saloon", options =
     timeZone: options.timeZone || "Europe/London"
   });
   const rideId = generatedRideId(row, worksheetName);
+  const upcomingOnly = worksheetName === "Upcoming Jobs >79";
   return {
     rideId,
     refer: rideId,
@@ -72,8 +74,9 @@ function normalizeWhatsAppSheetRow(row = {}, worksheetName = "Saloon", options =
     drop_off: read(row, WHATSAPP_SHEET_HEADERS.dropOff),
     distance: read(row, WHATSAPP_SHEET_HEADERS.distance).replace(/[^\d.-]/g, ""),
     fare: read(row, WHATSAPP_SHEET_HEADERS.fare).replace(/[^\d.-]/g, ""),
-    required_vehicle: vehicleForSheet(worksheetName),
+    required_vehicle: upcomingOnly ? read(row, WHATSAPP_SHEET_HEADERS.vehicle) : vehicleForSheet(worksheetName),
     payment_status: read(row, WHATSAPP_SHEET_HEADERS.paymentStatus),
+    ...(upcomingOnly && parsed ? { source_expires_at: parsed.toISOString() } : {}),
     pickupAt: parsed ? parsed.toISOString() : null
   };
 }
@@ -87,7 +90,7 @@ async function loadWhatsAppSheetJobs(options = {}) {
     return { mode: "off", jobs: [], message: "WhatsApp source sheets are not configured." };
   }
 
-  const ranges = worksheetNames.map((name) => `'${name.replace(/'/g, "''")}'!A1:Z5000`);
+  const ranges = worksheetNames.map((name) => `'${name.replace(/'/g, "''")}'!A1:Z`);
   let valueRanges;
   if (typeof options.sheetsClient.spreadsheets?.values?.batchGet === "function") {
     const response = await options.sheetsClient.spreadsheets.values.batchGet({ spreadsheetId, ranges });
@@ -103,10 +106,15 @@ async function loadWhatsAppSheetJobs(options = {}) {
   const expiryHours = Math.max(1, Number(options.expireAfterPickupHours) || 12);
   const jobs = [];
   worksheetNames.forEach((worksheetName, sheetIndex) => {
-    rowsToRecords(valueRanges[sheetIndex]?.values || [])
+    const values = valueRanges[sheetIndex]?.values;
+    if (!Array.isArray(values) || !Array.isArray(values[0])) throw new Error(`Source worksheet ${worksheetName} did not load completely`);
+    if (worksheetName === "Upcoming Jobs >79" && !["Refer", "Pickup Day & Date", "Starting Timing", "Pickup", "Drop Off"].every((header) => values[0].includes(header))) {
+      throw new Error(`Source worksheet ${worksheetName} has unexpected headers`);
+    }
+    rowsToRecords(values)
       .map((row) => normalizeWhatsAppSheetRow(row, worksheetName, options))
       .filter((job) => job.pickup && job.drop_off && job.pickupAt)
-      .filter((job) => new Date(job.pickupAt).getTime() + expiryHours * 3600000 > now.getTime())
+      .filter((job) => new Date(job.pickupAt).getTime() + (worksheetName === "Upcoming Jobs >79" ? 0 : expiryHours * 3600000) > now.getTime())
       .forEach((job) => jobs.push(job));
   });
 

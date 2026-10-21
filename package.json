@@ -17,7 +17,8 @@
     "test": "npm run test:unit && npm run test:smoke",
     "test:unit": "node test/run.js unit",
     "test:smoke": "node test/run.js smoke",
-    "test:integration": "node test/run.js integration"
+    "test:integration": "node test/run.js integration",
+    "dashboard:deploy": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/deploy-ots-dashboard.ps1"
   },
   "engines": {
     "node": ">=20.0.0"

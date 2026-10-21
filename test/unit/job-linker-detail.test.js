@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { formatOtsCopyDetail, formatPassengerLine, formatUkPickup } = require("../../src/jobLinker/detailFormatter");
+const { formatBidPrice, formatGuideLine, formatOtsCopyDetail, formatPassengerLine, formatUkPickup } = require("../../src/jobLinker/detailFormatter");
 
 test("OTS Copy Detail uses exact source fields and UK summer time", () => {
   const result = formatOtsCopyDetail({
@@ -32,4 +32,22 @@ test("Copy Detail uses GMT in winter and never invents passengers", () => {
   assert.match(formatUkPickup("2026-12-06T12:55:00.000Z"), /\(GMT\)$/);
   assert.equal(formatPassengerLine({ luggageDetails: "Suitcases" }), "");
   assert.equal(formatPassengerLine({ passengerCount: 2 }), "Carrying 2 passengers");
+});
+
+test("Bid Copy Detail includes the persisted bid price", () => {
+  const result = formatOtsCopyDetail({
+    rideId: "OTS-BID-1",
+    pickup: "Heathrow Airport, Terminal 5",
+    dropOff: "York Avenue, New Milton, BH25 6BT",
+    bidAmount: 125
+  });
+  assert.match(result, /Bid price: £125\.00$/);
+  assert.equal(formatBidPrice({}), "");
+});
+
+test("Bid Copy Detail always explains full, partial or unavailable OTS guide data", () => {
+  assert.equal(formatGuideLine({ guidePriceMin: 76, guidePriceMax: 89 }), "As a guide, we are expecting prices between £76.00 and £89.00.");
+  assert.equal(formatGuideLine({ guidePriceMax: 241 }), "OTS guide maximum: £241.00 (minimum unavailable in source snapshot).");
+  assert.equal(formatGuideLine({ bidAmount: 236 }), "OTS guide price unavailable in source snapshot.");
+  assert.match(formatOtsCopyDetail({ rideId: "OTS-MISSING", bidAmount: 236 }), /OTS guide price unavailable in source snapshot\./);
 });

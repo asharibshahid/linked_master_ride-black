@@ -1,4 +1,267 @@
-Tomorrow 11 am
-Gatwick to TN23
-Fare 85
-Saloon
+PAIR: 1
+EXPECTED: MATCH
+
+BOOKED RIDE
+Date: Thu, 03 Sep 2026
+Time: 06:20
+Pickup: Heathrow Airport
+Drop-off: IP27 9FD
+Vehicle: Saloon Car
+
+RETURN CANDIDATE
+Date: Thu, 03 Sep 2026
+Time: 11:15
+Pickup: NR30 4LU
+Drop-off: Heathrow Airport
+Vehicle: Saloon Car
+
+Reason: Driver IP27 9FD par finish karega; NR30 4LU nearby pickup hai aur ride Heathrow wapas ja rahi hai.
+
+PAIR: 2
+EXPECTED: MATCH
+
+BOOKED RIDE
+Date: Sat, 05 Sep 2026
+Time: 00:35
+Pickup: Gatwick Airport, North Terminal
+Drop-off: 19 Northdene Road, Leicester, LE2 6FJ
+Vehicle: Saloon Car
+
+RETURN CANDIDATE
+Date: Sat, 05 Sep 2026
+Time: 07:30
+Pickup: 48 Alsthorpe Road, Oakham, LE15 6FD
+Drop-off: Stansted Airport
+Vehicle: Saloon Car
+
+Reason: Driver Leicester area mein finish karega; Oakham practical repositioning distance par hai aur next ride airport ki taraf ja rahi hai.
+
+PAIR: 3
+EXPECTED: MATCH
+
+BOOKED RIDE
+Date: Sat, 05 Sep 2026
+Time: 23:00
+Pickup: Gatwick Airport, North Terminal
+Drop-off: Little Court, Ganges Hill, Fivehead, Taunton, TA3 6PF
+Vehicle: Saloon Car
+
+RETURN CANDIDATE
+Date: Sun, 06 Sep 2026
+Time: 04:30
+Pickup: 7 Bedlands Lane, Budleigh Salterton, EX9 6QH
+Drop-off: Heathrow Airport, Terminal 2
+Vehicle: Saloon Car
+
+Reason: Driver Taunton side par finish karega; Budleigh Salterton se next airport journey mil rahi hai jo Heathrow wapas ja rahi hai.
+
+PAIR: 4
+EXPECTED: MATCH
+
+BOOKED RIDE
+Date: Sat, 29 Aug 2026
+Time: 22:15
+Pickup: Heathrow Airport, Terminal 3
+Drop-off: 52 Glanmor Road, Uplands, Swansea, SA2 0QB
+Vehicle: Saloon Car
+
+RETURN CANDIDATE
+Date: Sun, 30 Aug 2026
+Time: 06:45
+Pickup: T H Collective Ltd, 12-13 Bonville Road, Bristol, BS4 5QG
+Drop-off: Heathrow Airport, Terminal 5
+Vehicle: Saloon Car
+
+Reason: Driver Swansea mein finish karega; Bristol Heathrow ki return direction mein suitable repositioning point hai aur candidate ride Heathrow wapas ja rahi hai.
+
+PAIR: 5
+EXPECTED: MATCH
+
+BOOKED RIDE
+Date: Sat, 29 Aug 2026
+Time: 07:15
+Pickup: Heathrow Airport, Terminal 3
+Drop-off: 237 Windmill Road, Upper Marham, King's Lynn, PE33 9LE
+Vehicle: Saloon Car
+
+RETURN CANDIDATE
+Date: Sat, 29 Aug 2026
+Time: 14:45
+Pickup: 48 Heath Road, Navenby, Lincoln, LN5 0TT
+Drop-off: Heathrow Airport, Terminal 4
+Vehicle: Saloon Car
+
+Reason: Driver King's Lynn side par finish karega; Navenby se suitable return candidate available hai jo Heathrow wapas ja rahi hai.
+
+PAIR: 6
+EXPECTED: MATCH
+
+BOOKED RIDE
+Date: Thu, 11 Jun 2026
+Time: 06:25
+Pickup: Heathrow Airport, Terminal 3
+Drop-off: 30 Milligan Road, Leicester, LE2 8FA
+Vehicle: Saloon Car
+
+RETURN CANDIDATE
+Date: Thu, 11 Jun 2026
+Time: 12:45
+Pickup: 100 Priory Road, West Bridgford, Nottingham, NG2 5HX
+Drop-off: Heathrow Airport, Terminal 2
+Vehicle: Saloon Car
+
+Reason: Driver Leicester mein finish karega; Nottingham nearby repositioning area hai aur candidate ride Heathrow wapas ja rahi hai.
+
+
+
+
+
+
+
+
+
+
+
+
+
+BAD LINKES
+
+
+
+
+
+
+
+
+PAIR: 1
+EXPECTED: NO MATCH
+
+BOOKED RIDE
+Date: Sun, 20 Sep 2026
+Time: 04:30
+Pickup: LN4 4SY
+Drop-off: Heathrow Airport
+Vehicle: Any Car
+
+RETURN CANDIDATE
+Date: Sun, 20 Sep 2026
+Time: 09:20
+Pickup: Heathrow Airport
+Drop-off: NR31 6JF
+Vehicle: Any Car
+
+Reason: Bad link dataset example; although candidate Heathrow se start ho rahi hai, is pair ko expected NO MATCH treat karna hai.
+
+PAIR: 2
+EXPECTED: NO MATCH
+
+BOOKED RIDE
+Date: Thu, 17 Sep 2026
+Time: 07:30
+Pickup: RG1 1PZ
+Drop-off: Gatwick Airport
+Vehicle: 8 Seater Minibus
+
+RETURN CANDIDATE
+Date: Thu, 17 Sep 2026
+Time: 11:10
+Pickup: Stansted Airport
+Drop-off: NG9 1LB
+Vehicle: 8 Seater Minibus
+
+Reason: Driver Gatwick Airport par finish karega lekin next pickup Stansted Airport hai; repositioning distance bohat zyada hai.
+
+PAIR: 3
+EXPECTED: NO MATCH
+
+BOOKED RIDE
+Date: Thu, 27 Aug 2026
+Time: 05:50
+Pickup: CF24 3JX
+Drop-off: Heathrow Airport
+Vehicle: Any Car
+
+RETURN CANDIDATE
+Date: Wed, 26 Aug 2026
+Time: 11:20
+Pickup: Heathrow Airport
+Drop-off: BS36 2QG
+Vehicle: 8 Seater Minibus
+
+Reason: Return candidate booked ride se ek din pehle hai, isliye chronological match impossible hai. Vehicle requirement bhi different hai.
+
+PAIR: 4
+EXPECTED: NO MATCH
+
+BOOKED RIDE
+Date: Fri, 21 Aug 2026
+Time: 09:20
+Pickup: PE15 8UN
+Drop-off: Heathrow Airport
+Vehicle: Any Car
+
+RETURN CANDIDATE
+Date: Fri, 21 Aug 2026
+Time: 13:15
+Pickup: Heathrow Airport
+Drop-off: NG1 3PZ
+Vehicle: Any Car
+
+Reason: Bad link dataset example; candidate same airport se start hoti hai, lekin is pair ko expected NO MATCH classify karna hai.
+
+PAIR: 5
+EXPECTED: NO MATCH
+
+BOOKED RIDE
+Date: Mon, 17 Aug 2026
+Time: 04:00
+Pickup: IP27 9PN
+Drop-off: Heathrow Airport
+Vehicle: 8 Seater Minibus
+
+RETURN CANDIDATE
+Date: Mon, 17 Aug 2026
+Time: 07:15
+Pickup: Heathrow Airport
+Drop-off: DN21 1BH
+Vehicle: People Carrier
+
+Reason: Vehicle classes different hain; booked ride 8 Seater Minibus ki hai jabke candidate People Carrier ki requirement rakhti hai.
+
+PAIR: 6
+EXPECTED: NO MATCH
+
+BOOKED RIDE
+Date: Fri, 07 Aug 2026
+Time: 22:30
+Pickup: Stansted Airport
+Drop-off: SO16 6BD
+Vehicle: Any Car
+
+RETURN CANDIDATE
+Date: Sat, 08 Aug 2026
+Time: 03:00
+Pickup: IP28 8EZ
+Drop-off: Heathrow Airport
+Vehicle: Any Car
+
+Reason: Driver Southampton area mein finish karega jabke candidate pickup IP28 8EZ mein hai; repositioning distance impractical hai.
+
+PAIR: 7
+EXPECTED: NO MATCH
+
+BOOKED RIDE
+Date: Thu, 06 Aug 2026
+Time: 05:45
+Pickup: NR32 5LQ
+Drop-off: Heathrow Airport
+Vehicle: Any Car
+
+RETURN CANDIDATE
+Date: Thu, 06 Aug 2026
+Time: 12:05
+Pickup: Gatwick Airport
+Drop-off: OX15 5PF
+Vehicle: Any Car
+
+Reason: Driver Heathrow Airport par finish karega lekin next pickup Gatwick Airport hai; pickup booked ride ke finishing location ke nearby nahi hai.

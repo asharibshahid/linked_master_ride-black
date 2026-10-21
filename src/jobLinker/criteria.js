@@ -14,7 +14,7 @@ const DEFAULT_JOB_LINKER_CRITERIA = Object.freeze({
   allowedVehicles: ["Saloon", "MPV", "6 Seater"],
   allowedAreaCodes: UK_AREA_PREFIXES,
   areaMatchMode: "either",
-  maxLinkGapHours: 24,
+  maxLinkGapHours: 6,
   minimumTurnaroundMinutes: 30,
   expireAfterPickupHours: 12,
   trashRetentionHours: 24

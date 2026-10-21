@@ -54,6 +54,64 @@ function createAllowedGroupMessage(body, overrides = {}) {
   };
 }
 
+test("implausible short-route fare is blanked and sent to review", async () => {
+  const reviewed = [];
+  const handler = createMessageHandler({
+    env: { allowedGroups: ["120363408968321565@g.us"], appTimeZone: "Europe/London" },
+    logger: createSilentLogger(),
+    dedupe: new DedupeStore({ logger: createSilentLogger() }),
+    localExtractor: { extract: () => ({ pickup: "LHR", drop_off: "BN14 0RE", fare: "5666.80" }) },
+    openaiNormalizer: { normalizeWithOpenAI: async ({ extracted }) => extracted },
+    geocoder: { geocodeAddress: async () => ({ lat: 51.5, lng: -0.1 }) },
+    osrmClient: { getRouteFromOSRM: async () => ({ distance_meters: 56327 }) },
+    appendRideRow: async () => { throw new Error("should not append to Rides"); },
+    appendReviewRow: async (ride) => { reviewed.push(ride); }
+  });
+  await handler(createAllowedGroupMessage("Fare: GBP 5666.80", { messageId: "BAD-FARE" }));
+  assert.equal(reviewed.length, 1);
+  assert.equal(reviewed[0].distance, "35");
+  assert.equal(reviewed[0].fare, "");
+});
+
+test("identical group content with a new message ID is appended once", async () => {
+  const appended = [];
+  const handler = createMessageHandler({
+    env: { allowedGroups: ["120363408968321565@g.us"], appTimeZone: "Europe/London" },
+    logger: createSilentLogger(),
+    dedupe: new DedupeStore({ logger: createSilentLogger() }),
+    localExtractor: { extract: () => ({ pickup: "LHR", drop_off: "BN14 0RE", fare: "130" }) },
+    openaiNormalizer: { normalizeWithOpenAI: async ({ extracted }) => extracted },
+    geocoder: { geocodeAddress: async () => ({ lat: 51.5, lng: -0.1 }) },
+    osrmClient: { getRouteFromOSRM: async () => ({ distance_meters: 96561 }) },
+    appendRideRow: async (ride) => { appended.push(ride); }
+  });
+  await Promise.all([
+    handler(createAllowedGroupMessage("LHR to BN14 0RE Fare 130", { messageId: "COPY-1" })),
+    handler(createAllowedGroupMessage("LHR to BN14 0RE Fare 130", { messageId: "COPY-2" }))
+  ]);
+  await handler(createAllowedGroupMessage("LHR to BN14 0RE Fare 140", { messageId: "COPY-3" }));
+  assert.equal(appended.length, 2);
+});
+
+test("implausible route distance is not converted into mileage or fare", async () => {
+  const reviewed = [];
+  const handler = createMessageHandler({
+    env: { allowedGroups: ["120363408968321565@g.us"], appTimeZone: "Europe/London", fareBase: 10, farePerKm: 2 },
+    logger: createSilentLogger(),
+    dedupe: new DedupeStore({ logger: createSilentLogger() }),
+    localExtractor: { extract: () => ({ pickup: "LHR", drop_off: "STN", required_vehicle: "Saloon Car" }) },
+    openaiNormalizer: { normalizeWithOpenAI: async ({ extracted }) => extracted },
+    geocoder: { geocodeAddress: async () => ({ lat: 51.5, lng: -0.1 }) },
+    osrmClient: { getRouteFromOSRM: async () => ({ distance_meters: 1609344 * 2 }) },
+    appendRideRow: async () => { throw new Error("should not append to Rides"); },
+    appendReviewRow: async (ride) => { reviewed.push(ride); }
+  });
+  await handler(createAllowedGroupMessage("LHR to STN", { messageId: "BAD-DISTANCE" }));
+  assert.equal(reviewed.length, 1);
+  assert.equal(reviewed[0].distance, "");
+  assert.equal(reviewed[0].fare, "");
+});
+
 test("enrich pipeline geocodes after normalization, runs OSRM only with both coordinates, and calculates fare from distance plus vehicle", async () => {
   const { logger, entries } = createRecordingLogger();
   const appendRideCalls = [];

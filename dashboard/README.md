@@ -12,7 +12,9 @@ This folder is a standalone Vercel frontend. It does not run WhatsApp, OTS, Goog
 DASHBOARD_API_BASE_URL=https://api.your-domain.com
 ```
 
-4. Deploy. The browser asks each operator for the dashboard token and name; the token is kept only in that browser's local storage.
+4. From the repository root, run `npm run dashboard:deploy`. This deploys the `dashboard/` folder and moves the live `ots-chat.vercel.app` alias to that exact deployment. Do not use a raw production Vercel deploy for this dashboard, because Vercel's project default alias is different.
+
+The dashboard HTML, JavaScript, and CSS are delivered with `no-store` headers, so a browser revalidates the current interface instead of holding an old dashboard release.
 
 ## Backend VPS configuration
 

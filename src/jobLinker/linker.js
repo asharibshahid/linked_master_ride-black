@@ -5,6 +5,8 @@ const { normalizeVehicle, normalizeCriteria } = require("./criteria");
 
 const MAX_DEADHEAD_MILES = 90;
 const ROAD_DISTANCE_PREFILTER_MILES = 115;
+const POSSIBLE_MAX_DEADHEAD_MILES = 120;
+const POSSIBLE_PAIR_LIMIT = 24;
 const AIRPORT_QUERIES = Object.freeze({
   LHR: "Heathrow Airport, UK",
   LGW: "Gatwick Airport, UK",
@@ -192,16 +194,7 @@ function buildSequence(anchor, candidate) {
   const anchorStart = timeValue(anchor.pickupAt || anchor.pickup_at);
   const candidateStart = timeValue(candidate.pickupAt || candidate.pickup_at);
   if (!anchorStart || !candidateStart || anchor.rideId === candidate.rideId) return null;
-
-  if (candidateStart < anchorStart) {
-    return {
-      direction: "before",
-      previousRide: candidate,
-      nextRide: anchor,
-      previousStart: candidateStart,
-      nextStart: anchorStart
-    };
-  }
+  if (candidateStart <= anchorStart) return null;
   return {
     direction: "after",
     previousRide: anchor,
@@ -209,6 +202,23 @@ function buildSequence(anchor, candidate) {
     previousStart: anchorStart,
     nextStart: candidateStart
   };
+}
+
+function isAirportLocation(value) {
+  return Boolean(airportCoordinate(value));
+}
+
+function isStrictAirportReturnPattern(anchor, candidate) {
+  const anchorPickup = text(anchor.pickup);
+  const anchorDrop = text(anchor.dropOff || anchor.drop_off);
+  const candidatePickup = text(candidate.pickup);
+  const candidateDrop = text(candidate.dropOff || candidate.drop_off);
+  return (
+    isAirportLocation(anchorPickup) &&
+    !isAirportLocation(anchorDrop) &&
+    !isAirportLocation(candidatePickup) &&
+    isAirportLocation(candidateDrop)
+  );
 }
 
 function deadheadScore(distanceMiles) {
@@ -243,6 +253,7 @@ async function scoreLink(anchor, candidate, rawCriteria = {}, options = {}) {
   const anchorVehicle = normalizeVehicle(anchor.requiredVehicle || anchor.required_vehicle);
   const candidateVehicle = normalizeVehicle(candidate.requiredVehicle || candidate.required_vehicle);
   if (!anchorVehicle || anchorVehicle !== candidateVehicle) return null;
+  if (!isStrictAirportReturnPattern(anchor, candidate)) return null;
 
   const sequence = buildSequence(anchor, candidate);
   if (!sequence) return null;
@@ -342,6 +353,155 @@ async function findLinkedRideOpportunities(prebookJobs = [], candidateJobs = [],
   return links.sort((left, right) => right.score - left.score || left.timeGapMinutes - right.timeGapMinutes);
 }
 
+async function scorePossibleReturn(anchor, candidate, rawCriteria = {}, options = {}) {
+  const criteria = normalizeCriteria(rawCriteria);
+  const anchorVehicle = normalizeVehicle(anchor.requiredVehicle || anchor.required_vehicle);
+  const candidateVehicle = normalizeVehicle(candidate.requiredVehicle || candidate.required_vehicle);
+  if (!anchorVehicle || anchorVehicle !== candidateVehicle) return null;
+  if (!isStrictAirportReturnPattern(anchor, candidate)) return null;
+
+  const sequence = buildSequence(anchor, candidate);
+  if (!sequence) return null;
+  const { previousRide, nextRide, previousStart, nextStart } = sequence;
+  const startDifferenceMinutes = (nextStart - previousStart) / 60000;
+  if (startDifferenceMinutes <= 0 || startDifferenceMinutes > (criteria.maxLinkGapHours + 12) * 60) return null;
+
+  const resolver = options.resolver || createRoutingResolver(options);
+  const previousPickup = text(previousRide.pickup);
+  const previousDrop = text(previousRide.dropOff || previousRide.drop_off);
+  const nextPickup = text(nextRide.pickup);
+  const nextDrop = text(nextRide.dropOff || nextRide.drop_off);
+  if (!previousPickup || !previousDrop || !nextPickup || !nextDrop) return null;
+
+  const previousDropPoint = await resolver.geocode(previousDrop);
+  const nextPickupPoint = await resolver.geocode(nextPickup);
+  if (!previousDropPoint || !nextPickupPoint) return null;
+  const straightDeadheadMiles = haversineMiles(previousDropPoint, nextPickupPoint);
+  if (!Number.isFinite(straightDeadheadMiles) || straightDeadheadMiles > POSSIBLE_MAX_DEADHEAD_MILES) return null;
+
+  const previousPickupPoint = await resolver.geocode(previousPickup);
+  if (!previousPickupPoint) return null;
+  const [previousRoute, deadheadRoute, nextDropPoint] = await Promise.all([
+    resolver.route(previousPickupPoint, previousDropPoint),
+    resolver.route(previousDropPoint, nextPickupPoint),
+    resolver.geocode(nextDrop)
+  ]);
+  if (!deadheadRoute || !nextDropPoint || deadheadRoute.distanceMiles > POSSIBLE_MAX_DEADHEAD_MILES) return null;
+
+  const previousRideMinutes = previousRoute?.durationMinutes || estimateRideMinutes(previousRide);
+  const availableAfterRideMinutes = startDifferenceMinutes - previousRideMinutes;
+  const remainingAfterDeadheadMinutes = availableAfterRideMinutes - deadheadRoute.durationMinutes;
+  if (remainingAfterDeadheadMinutes < criteria.minimumTurnaroundMinutes) return null;
+
+  const originDistance = haversineMiles(previousDropPoint, previousPickupPoint);
+  const endingDistance = haversineMiles(nextDropPoint, previousPickupPoint);
+  if (!Number.isFinite(originDistance) || !Number.isFinite(endingDistance) || originDistance <= 0) return null;
+  const progressRatio = (originDistance - endingDistance) / originDistance;
+  const direction = returnDirectionScore(originDistance, endingDistance);
+  if (!direction) return null;
+  const slackMinutes = remainingAfterDeadheadMinutes - criteria.minimumTurnaroundMinutes;
+  const breakdown = {
+    deadhead: deadheadScore(deadheadRoute.distanceMiles),
+    availability: availabilityScore(slackMinutes),
+    returnDirection: direction?.score || 0,
+    vehicle: 20
+  };
+  const distanceMiles = Number(deadheadRoute.distanceMiles.toFixed(1));
+  const travelMinutes = Math.round(deadheadRoute.durationMinutes);
+  const gapMinutes = Math.round(availableAfterRideMinutes);
+  const reviewReasons = [];
+  if (distanceMiles > MAX_DEADHEAD_MILES) reviewReasons.push(`deadhead exceeds the ${MAX_DEADHEAD_MILES} mi strict limit`);
+  if (availableAfterRideMinutes > criteria.maxLinkGapHours * 60) {
+    reviewReasons.push(`post-ride wait exceeds the ${criteria.maxLinkGapHours} hour strict limit`);
+  }
+  const key = `${anchor.rideId}|${candidate.rideId}|possible`;
+
+  return {
+    linkId: `POSSIBLE-${crypto.createHash("sha1").update(key).digest("hex").slice(0, 12).toUpperCase()}`,
+    anchorRideId: anchor.rideId,
+    candidateRideId: candidate.rideId,
+    firstRideId: previousRide.rideId,
+    secondRideId: nextRide.rideId,
+    candidateSource: candidate.sourceType || candidate.source_type,
+    direction: "manual review",
+    previousDrop,
+    nextPickup,
+    timeGapMinutes: gapMinutes,
+    timeGap: `${gapMinutes} min (${travelMinutes} min deadhead)`,
+    distanceMiles,
+    distanceBetween: `${distanceMiles} mi / ${travelMinutes} min`,
+    savingEstimate: null,
+    score: Math.min(100, Object.values(breakdown).reduce((sum, value) => sum + value, 0)),
+    scoreBreakdown: breakdown,
+    reviewOnly: true,
+    reason: `review only: actual drop-to-pickup route ${distanceMiles} mi/${travelMinutes} min; ${Math.round(remainingAfterDeadheadMinutes)} min available; ${Math.round(progressRatio * 100)}% return progress; ${reviewReasons.join("; ") || "not promoted to a strict link"}`
+  };
+}
+
+async function findPossibleReturnOpportunities(prebookJobs = [], candidateJobs = [], criteria = {}, options = {}) {
+  const resolver = options.resolver || createRoutingResolver(options);
+  const normalizedCriteria = normalizeCriteria(criteria);
+  const pairs = [];
+  for (const anchor of prebookJobs) {
+    const anchorVehicle = normalizeVehicle(anchor.requiredVehicle || anchor.required_vehicle);
+    const anchorStart = timeValue(anchor.pickupAt || anchor.pickup_at);
+    if (!anchorVehicle || !anchorStart) continue;
+    const earliestCandidateStart = anchorStart + (estimateRideMinutes(anchor) + normalizedCriteria.minimumTurnaroundMinutes) * 60000;
+    for (const candidate of candidateJobs) {
+      const candidateStart = timeValue(candidate.pickupAt || candidate.pickup_at);
+      const candidateVehicle = normalizeVehicle(candidate.requiredVehicle || candidate.required_vehicle);
+      if (
+        candidateVehicle !== anchorVehicle ||
+        !isStrictAirportReturnPattern(anchor, candidate) ||
+        !candidateStart ||
+        candidateStart < earliestCandidateStart ||
+        candidateStart - anchorStart > (normalizedCriteria.maxLinkGapHours + 12) * 3600000
+      ) continue;
+      pairs.push({
+        anchor,
+        candidate,
+        startDifferenceMinutes: (candidateStart - anchorStart) / 60000,
+        locationHint: sharedLocationScore(anchor.dropOff || anchor.drop_off, candidate.pickup).score
+      });
+    }
+  }
+  const rankedPairs = (await Promise.all(pairs.map(async (pair) => {
+    const [anchorDropPoint, candidatePickupPoint] = await Promise.all([
+      resolver.geocode(pair.anchor.dropOff || pair.anchor.drop_off),
+      resolver.geocode(pair.candidate.pickup)
+    ]);
+    const proximityMiles = haversineMiles(anchorDropPoint, candidatePickupPoint);
+    if (!Number.isFinite(proximityMiles) || proximityMiles > POSSIBLE_MAX_DEADHEAD_MILES) return null;
+    return { ...pair, proximityMiles };
+  }))).filter(Boolean);
+  rankedPairs.sort((left, right) =>
+    left.proximityMiles - right.proximityMiles ||
+    right.locationHint - left.locationHint ||
+    left.startDifferenceMinutes - right.startDifferenceMinutes
+  );
+  const selected = [];
+  const sourceCounts = new Map();
+  const sources = new Set(rankedPairs.map((pair) => pair.candidate.sourceType || pair.candidate.source_type));
+  const sourceLimit = Math.max(1, Math.ceil(POSSIBLE_PAIR_LIMIT / Math.max(1, sources.size)));
+  for (const pair of rankedPairs) {
+    const source = pair.candidate.sourceType || pair.candidate.source_type;
+    if ((sourceCounts.get(source) || 0) >= sourceLimit) continue;
+    selected.push(pair);
+    sourceCounts.set(source, (sourceCounts.get(source) || 0) + 1);
+    if (selected.length === POSSIBLE_PAIR_LIMIT) break;
+  }
+  for (const pair of rankedPairs) {
+    if (selected.length === POSSIBLE_PAIR_LIMIT) break;
+    if (!selected.includes(pair)) selected.push(pair);
+  }
+  const links = [];
+  for (const { anchor, candidate } of selected) {
+    const link = await scorePossibleReturn(anchor, candidate, normalizedCriteria, { resolver });
+    if (link) links.push(link);
+  }
+  return links.sort((left, right) => right.score - left.score || left.timeGapMinutes - right.timeGapMinutes);
+}
+
 module.exports = {
   MAX_DEADHEAD_MILES,
   estimateRideMinutes,
@@ -351,6 +511,10 @@ module.exports = {
   createUkPostcodeLookup,
   createRoutingResolver,
   sharedLocationScore,
+  isAirportLocation,
+  isStrictAirportReturnPattern,
   scoreLink,
-  findLinkedRideOpportunities
+  scorePossibleReturn,
+  findLinkedRideOpportunities,
+  findPossibleReturnOpportunities
 };

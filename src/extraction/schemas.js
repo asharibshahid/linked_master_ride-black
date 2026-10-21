@@ -10,7 +10,8 @@ const CANONICAL_RIDE_FIELDS = Object.freeze([
   "distance",
   "fare",
   "required_vehicle",
-  "payment_status"
+  "payment_status",
+  "special_instructions"
 ]);
 
 const STRICT_SHEET_HEADERS = Object.freeze([
@@ -25,7 +26,8 @@ const STRICT_SHEET_HEADERS = Object.freeze([
   "Distance",
   "Fare",
   "Required Vehicle",
-  "Payment Status"
+  "Payment Status",
+  "Special Instructions"
 ]);
 
 const STRICT_HEADER_FIELD_MAP = Object.freeze({
@@ -40,7 +42,8 @@ const STRICT_HEADER_FIELD_MAP = Object.freeze({
   Distance: "distance",
   Fare: "fare",
   "Required Vehicle": "required_vehicle",
-  "Payment Status": "payment_status"
+  "Payment Status": "payment_status",
+  "Special Instructions": "special_instructions"
 });
 
 const HEADER_TO_FIELD = Object.freeze({
@@ -55,7 +58,8 @@ const HEADER_TO_FIELD = Object.freeze({
   distance: "distance",
   fare: "fare",
   "required vehicle": "required_vehicle",
-  "payment status": "payment_status"
+  "payment status": "payment_status",
+  "special instructions": "special_instructions"
 });
 
 const FIELD_ALIASES = Object.freeze({
@@ -77,7 +81,8 @@ const FIELD_ALIASES = Object.freeze({
   distance: ["route distance"],
   fare: ["final fare", "calculated fare", "quoted fare", "fare extracted"],
   required_vehicle: ["vehicle", "required vehicle"],
-  payment_status: ["payment", "payment status"]
+  payment_status: ["payment", "payment status"],
+  special_instructions: ["instructions", "special instructions", "notes"]
 });
 
 const RIDE_OBJECT_TEMPLATE = Object.freeze(
@@ -164,7 +169,8 @@ function normalizeAliases(record = {}) {
       record.calculatedFare ||
       "",
     required_vehicle: record.required_vehicle || record.requiredVehicle,
-    payment_status: record.payment_status || record.paymentStatus
+    payment_status: record.payment_status || record.paymentStatus,
+    special_instructions: record.special_instructions || record.specialInstructions
   };
 }
 
@@ -264,7 +270,8 @@ function buildSheetRowObject(record = {}) {
       normalizedRide.required_vehicle ||
       toCell(record.vehicle || record.requiredVehicle) ||
       "",
-    "Payment Status": normalizedRide.payment_status || ""
+    "Payment Status": normalizedRide.payment_status || "",
+    "Special Instructions": normalizedRide.special_instructions || ""
   };
 }
 

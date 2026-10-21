@@ -3,6 +3,7 @@ const { buildSheetRowObject } = require("../extraction/schemas");
 const { buildAppendRange, classifyAppendFailure, fetchSheetHeaders } = require("./appendRow");
 const { executeWithRetry } = require("../utils/retry");
 const { collapseWhitespace, safeTrim } = require("../utils/text");
+const { withSheetMutation } = require("./mutationQueue");
 
 const MONTH_INDEX = Object.freeze({
   january: 1,
@@ -91,7 +92,7 @@ function parsePickupDateParts(value, options = {}) {
   }
 
   match = text.match(
-    /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)\s+(\d{4})\b/i
+    /\b(?:mon|monday|tue|tues|tuesday|wed|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday|sun|sunday)\s+(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)\s+(\d{2}|\d{4})\b/i
   );
   if (match) {
     const day = Number(match[1]);
@@ -103,7 +104,7 @@ function parsePickupDateParts(value, options = {}) {
     }
   }
 
-  match = text.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)\s+(\d{4})\b/i);
+  match = text.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)\s+(\d{2}|\d{4})\b/i);
   if (match) {
     const day = Number(match[1]);
     const month = MONTH_INDEX[String(match[2] || "").toLowerCase()];
@@ -149,15 +150,15 @@ function parsePickupTimeParts(value) {
       if (meridiem === "pm") hour += 12;
     }
 
-    return { hour, minute };
+    return { hour, minute, dayOffset: 0 };
   }
 
   match = text.match(/\b(\d{1,2}):(\d{2})\b/);
   if (match) {
     const hour = Number(match[1]);
     const minute = Number(match[2]);
-    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
-      return { hour, minute };
+    if (hour >= 0 && hour <= 47 && minute >= 0 && minute <= 59) {
+      return { hour: hour % 24, minute, dayOffset: Math.floor(hour / 24) };
     }
   }
 
@@ -241,9 +242,17 @@ function parsePickupDateTime(dateValue, timeValue, options = {}) {
   const timeParts = parsePickupTimeParts(timeValue);
   if (!dateParts || !timeParts) return null;
 
+  const shiftedDate = new Date(Date.UTC(
+    dateParts.year,
+    dateParts.month - 1,
+    dateParts.day + (timeParts.dayOffset || 0)
+  ));
+
   return resolveTimeZoneDateTime(
     {
-      ...dateParts,
+      year: shiftedDate.getUTCFullYear(),
+      month: shiftedDate.getUTCMonth() + 1,
+      day: shiftedDate.getUTCDate(),
       ...timeParts,
       second: 0
     },
@@ -266,7 +275,11 @@ function buildPickupSortKey(record = {}) {
 
   return {
     invalidDate: 0,
-    dateValue: Date.UTC(dateParts.year, dateParts.month - 1, dateParts.day),
+    dateValue: Date.UTC(
+      dateParts.year,
+      dateParts.month - 1,
+      dateParts.day + (timeParts?.dayOffset || 0)
+    ),
     invalidTime: timeParts ? 0 : 1,
     timeValue: timeParts ? timeParts.hour * 60 + timeParts.minute : Number.POSITIVE_INFINITY
   };
@@ -367,6 +380,7 @@ async function sortUpcomingJobsSheet({
   worksheetName,
   logger = { warn: () => {} }
 }) {
+  return withSheetMutation(spreadsheetId, worksheetName, async () => {
   if (!canRewriteSheetRows(sheetsClient)) {
     return { sorted: false, reason: "sheet_update_unavailable" };
   }
@@ -388,6 +402,7 @@ async function sortUpcomingJobsSheet({
     worksheetName,
     headers,
     rows
+  });
   });
 }
 
@@ -553,6 +568,7 @@ async function appendUpcomingJobIfEligible(ride, options = {}) {
     };
   }
 
+  return withSheetMutation(spreadsheetId, worksheetName, async () => {
   const dedupeKey = buildUpcomingDedupeKey(ride);
   const { headers, rows } = await loadExistingUpcomingRows({
     sheetsClient,
@@ -601,6 +617,7 @@ async function appendUpcomingJobIfEligible(ride, options = {}) {
     appended: true,
     reason: "appended"
   };
+  });
 }
 
 function createUpcomingJobAppender(options = {}) {

@@ -1,0 +1,1 @@
+*/5 * * * * cd /opt/groups-dt && /usr/bin/flock -n /var/lock/ride-expiry.lock /usr/bin/timeout 15m /usr/bin/node scripts/cleanup-expired-rides.js >> /var/log/ride-expiry.log 2>&1

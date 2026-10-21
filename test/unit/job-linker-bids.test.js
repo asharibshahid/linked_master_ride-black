@@ -8,7 +8,7 @@ const {
   validateBidAmount,
   validateManualBidRide
 } = require("../../src/jobLinker/bids");
-const { JobLinkerRepository } = require("../../src/jobLinker/repository");
+const { JobLinkerRepository, mapWorkspaceBid, submissionTiming } = require("../../src/jobLinker/repository");
 const { registerJobLinkerRoutes } = require("../../src/jobLinker/routes");
 
 function trustedReservation(overrides = {}) {
@@ -232,6 +232,76 @@ test("repository duplicate guard locks the ride and rejects a repeated persisted
   assert.equal(queries.some((sql) => sql === "rollback"), true);
 });
 
+test("bid timing exposes queued, worker, provider activation and completion durations", () => {
+  const submission = {
+    createdAt: "2026-09-26T10:00:00.000Z",
+    attemptedAt: "2026-09-26T10:00:00.400Z",
+    submitActivatedAt: "2026-09-26T10:00:12.000Z",
+    completedAt: "2026-09-26T10:00:16.500Z",
+    workerTiming: { prepareMs: 11000, confirmationMs: 4500, totalMs: 16100 }
+  };
+  assert.deepEqual(submissionTiming(submission), {
+    queuedAt: submission.createdAt,
+    attemptedAt: submission.attemptedAt,
+    submitActivatedAt: submission.submitActivatedAt,
+    completedAt: submission.completedAt,
+    queueDurationMs: 400,
+    processingDurationMs: 16100,
+    totalDurationMs: 16500,
+    workerTiming: submission.workerTiming
+  });
+  const mapped = mapWorkspaceBid({
+    bid_id: "bid-timing",
+    ride_id: "OTS-TIMING",
+    pricing_payload: { submission },
+    created_at: submission.createdAt,
+    updated_at: submission.completedAt
+  });
+  assert.equal(mapped.processingDurationMs, 16100);
+  assert.equal(mapped.workerTiming.prepareMs, 11000);
+});
+
+test("persisted bid guide snapshot survives a missing or expired ride guide", () => {
+  const mapped = mapWorkspaceBid({
+    bid_id: "bid-guide",
+    ride_id: "OTS-GUIDE",
+    guide_price_min: null,
+    guide_price_max: null,
+    guide_price_text: "",
+    pricing_payload: {
+      guidePriceMin: 76,
+      guidePriceMax: 89,
+      guidePriceText: "As a guide, we are expecting prices between £76.00 and £89.00."
+    }
+  });
+  assert.equal(mapped.guidePriceMin, 76);
+  assert.equal(mapped.guidePriceMax, 89);
+  assert.match(mapped.guidePriceText, /between £76\.00 and £89\.00/);
+});
+
+test("bid status transitions preserve the existing nested submission timeline", async () => {
+  const queries = [];
+  const repository = new JobLinkerRepository();
+  repository.withClient = async (run) => run({
+    query: async (sql, params = []) => {
+      const statement = String(sql);
+      queries.push({ sql: statement, params });
+      if (statement.includes("bid_status = 'Submitting'")) return { rowCount: 1, rows: [] };
+      if (statement.includes("where b.bid_id")) return { rowCount: 1, rows: [{ bid_id: "bid-1", bid_status: "Submitted", pricing_payload: {} }] };
+      if (statement.includes("set bid_status = $2")) return { rowCount: 1, rows: [] };
+      return { rowCount: 0, rows: [] };
+    }
+  });
+  await repository.markManualBidSubmitting("bid-1");
+  await repository.completeManualBid({ bidId: "bid-1", success: true, timing: { totalMs: 18000 } });
+  const transitions = queries.filter((entry) => /update bids/.test(entry.sql));
+  assert.equal(transitions.length, 2);
+  assert.ok(transitions.every((entry) => /jsonb_set/.test(entry.sql)));
+  assert.ok(transitions.every((entry) => /pricing_payload->'submission'/.test(entry.sql)));
+  assert.equal(JSON.parse(transitions[0].params[1]).state, "attempting");
+  assert.equal(JSON.parse(transitions[1].params[3]).workerTiming.totalMs, 18000);
+});
+
 test("repository lets failed manual bid attempts be retried for an active OTS ride", async () => {
   let updateParams = null;
   const repository = new JobLinkerRepository();
@@ -396,7 +466,10 @@ test("manual bid reservation persists the normalized OTS business reference", as
           pickup_at: "2026-09-06T10:00:00.000Z",
           source_expires_at: "2026-09-06T09:00:00.000Z",
           pickup: "Heathrow",
-          drop_off: "Chelsea"
+          drop_off: "Chelsea",
+          guide_price_min: 76,
+          guide_price_max: 89,
+          guide_price_text: "As a guide, we are expecting prices between £76.00 and £89.00."
         }] };
       }
       if (statement.includes("select * from bids")) return { rowCount: 0, rows: [] };
@@ -416,6 +489,9 @@ test("manual bid reservation persists the normalized OTS business reference", as
 
   assert.equal(storedMetadata.sourceReference, "ots-0509  -1");
   assert.equal(storedMetadata.sourceReferenceKey, "OTS-0509-1");
+  assert.equal(storedMetadata.guidePriceMin, 76);
+  assert.equal(storedMetadata.guidePriceMax, 89);
+  assert.match(storedMetadata.guidePriceText, /between £76\.00 and £89\.00/);
 });
 
 test("Trash and Restore routes execute repository actions and refresh the workspace", async () => {
@@ -466,4 +542,107 @@ test("Job Linker operation errors do not expose server paths or stack details", 
     assert.equal(syncBody.code, "JOB_LINKER_OPERATION_FAILED");
     assert.doesNotMatch(JSON.stringify(syncBody), /\/opt\/private|C:\\\\private/);
   }, workspaceService);
+});
+
+test("authenticated WhatsApp ingest stores one normalized ride through shared filtering", async () => {
+  const calls = [];
+  const repository = {
+    async syncSourceJobs(jobs, sourceType) {
+      calls.push({ jobs, sourceType });
+      return { count: 1 };
+    }
+  };
+  await withServer(() => true, { submitManualBid: async () => ({ ok: true }) }, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/job-linker/whatsapp-ingest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ride: { refer: "WA-123", pickup: "Heathrow", drop_off: "Birmingham" } })
+    });
+    assert.equal(response.status, 202);
+    assert.deepEqual(await response.json(), { ok: true, accepted: true, filtered: false });
+  }, null, repository);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].sourceType, "WhatsApp");
+  assert.equal(calls[0].jobs[0].refer, "WA-123");
+});
+
+test("WhatsApp ingest requires dashboard authentication", async () => {
+  await withServer((_request, response) => {
+    response.status(401).json({ ok: false, message: "Dashboard token required" });
+    return false;
+  }, { submitManualBid: async () => ({ ok: true }) }, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/job-linker/whatsapp-ingest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ride: { refer: "WA-123" } })
+    });
+    assert.equal(response.status, 401);
+  }, null, { syncSourceJobs: async () => ({ count: 1 }) });
+});
+
+test("archive and unarchive link routes are authenticated and never invoke bidding", async () => {
+  const calls = [];
+  const workspaceService = {
+    archiveLink: async (linkId) => { calls.push(`archive:${linkId}`); return { ok: true }; },
+    unarchiveLink: async (linkId) => { calls.push(`unarchive:${linkId}`); return { ok: true }; }
+  };
+  await withServer(() => true, { submitManualBid: async () => { throw new Error("Bid must not run"); } }, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/job-linker/links/LINK-123/archive`, { method: "POST" });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).ok, true);
+    const restore = await fetch(`${baseUrl}/api/job-linker/links/LINK-123/unarchive`, { method: "POST" });
+    assert.equal(restore.status, 200);
+    assert.equal((await restore.json()).ok, true);
+  }, workspaceService);
+  assert.deepEqual(calls, ["archive:LINK-123", "unarchive:LINK-123"]);
+  await withServer((_request, response) => { response.status(401).json({ ok: false }); return false; }, {}, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/job-linker/links/LINK-123/archive`, { method: "POST" });
+    assert.equal(response.status, 401);
+    const restore = await fetch(`${baseUrl}/api/job-linker/links/LINK-123/unarchive`, { method: "POST" });
+    assert.equal(restore.status, 401);
+  }, workspaceService);
+  assert.deepEqual(calls, ["archive:LINK-123", "unarchive:LINK-123"]);
+});
+
+test("unarchive rejects links that are no longer active", async () => {
+  const repository = new JobLinkerRepository();
+  const queries = [];
+  repository.withClient = async (run) => run({ query: async (sql, params) => {
+    queries.push({ sql, params });
+    return { rowCount: 0, rows: [] };
+  } });
+  assert.deepEqual(await repository.unarchiveLink("LINK-PAST"), { ok: false, linkId: "LINK-PAST" });
+  assert.match(queries[0].sql, /l\.status in \('Archived', 'Archived Review'\)/);
+  assert.match(queries[0].sql, /n\.pickup_at > now\(\)/);
+  assert.match(queries[0].sql, /n\.source_expires_at > now\(\)/);
+  assert.deepEqual(queries[0].params, ["LINK-PAST"]);
+});
+
+test("archived links survive recomputation but past returns and missing sheet rows are hidden", async () => {
+  const queries = [];
+  const repository = new JobLinkerRepository();
+  repository.withClient = async (run) => run({ query: async (sql, params) => {
+    queries.push({ sql, params });
+    return { rows: [], rowCount: sql.includes("returning l.link_id") ? 1 : 0 };
+  } });
+  await repository.replaceLinks([
+    { linkId: "LINK-123", firstRideId: "PRE-1", secondRideId: "OTS-2", anchorRideId: "PRE-1", candidateRideId: "OTS-2", score: 75 },
+    { linkId: "POSSIBLE-123", firstRideId: "PRE-1", secondRideId: "OTS-3", anchorRideId: "PRE-1", candidateRideId: "OTS-3", score: 55, reviewOnly: true }
+  ]);
+  assert.ok(queries.some(({ sql }) => sql.includes("status in ('Linker Opportunity', 'Review Opportunity')")));
+  assert.ok(queries.some(({ sql }) => sql.includes("on conflict (link_id) do nothing")));
+  const inserts = queries.filter(({ sql }) => sql.includes("insert into linked_rides"));
+  assert.equal(inserts[0].params[8], "Linker Opportunity");
+  assert.equal(inserts[1].params[8], "Review Opportunity");
+  await repository.archiveLink("LINK-123");
+  assert.ok(queries.some(({ sql }) => sql.includes("then 'Archived Review' else 'Archived'")));
+  assert.deepEqual(await repository.unarchiveLink("LINK-123"), { ok: true, linkId: "LINK-123" });
+  assert.ok(queries.some(({ sql }) => sql.includes("then 'Review Opportunity' else 'Linker Opportunity'")));
+  await repository.listLinks();
+  await repository.listReviewLinks();
+  await repository.listArchivedLinks();
+  assert.equal(queries.filter(({ sql }) => sql.includes("n.pickup_at > now()")).length, 5);
+  await repository.expireMissingSheetJobs(["RID-KEEP"]);
+  const expiration = queries.find(({ sql }) => sql.includes("ride_id <> all($1::text[])"));
+  assert.deepEqual(expiration.params, [["RID-KEEP"], "WhatsApp Sheet: Upcoming Jobs >79"]);
 });

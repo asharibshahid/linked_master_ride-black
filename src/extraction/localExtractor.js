@@ -100,7 +100,7 @@ const UK_POSTCODE_DISTRICT_PATTERN = /^[A-Z]{1,2}\d[A-Z\d]?$/i;
 const KNOWN_AIRPORT_CODE_PATTERN =
   /^(?:LHR|LGW|LTN|STN|LCY|SEN|BHX|MAN|BRS|SOU|BOH|EXT|CWL|NCL|LBA|LPL|EMA|EDI|GLA|ABZ)$/i;
 const DATE_WORD_MONTH_YEAR_PATTERN =
-  /\b(?:(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+)?(\d{1,2})(?:st|nd|rd|th)?[\s/-]+([a-z]+)[\s,/-]+(\d{4})\b/i;
+  /\b(?:(mon|monday|tue|tues|tuesday|wed|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday|sun|sunday)\s+)?(\d{1,2})(?:st|nd|rd|th)?[\s/-]+([a-z]+)[\s,/-]+(\d{2}|\d{4})\b/i;
 const DATE_NUMERIC_PATTERN =
   /\b(?:(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+)?(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b/i;
 const DATE_DAY_MONTH_PATTERN =
@@ -376,9 +376,9 @@ function ordinalDay(day) {
 
 function formatPickupDayDate(date, timeZone) {
   const formatter = new Intl.DateTimeFormat("en-GB", {
-    weekday: "long",
-    month: "long",
-    year: "numeric",
+    weekday: "short",
+    month: "short",
+    year: "2-digit",
     day: "numeric",
     timeZone: timeZone || "Europe/London"
   });
@@ -438,7 +438,7 @@ function resolveAbsoluteDateFromText(text, receivedAt, timeZone) {
   if (match) {
     const monthIndex = MONTH_INDEX[String(match[3] || "").toLowerCase()];
     if (Number.isFinite(monthIndex)) {
-      return buildUtcNoonDate(Number(match[4]), monthIndex, Number(match[2]));
+      return buildUtcNoonDate(parseYearValue(match[4], baseParts.year), monthIndex, Number(match[2]));
     }
   }
 

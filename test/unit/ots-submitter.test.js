@@ -78,12 +78,14 @@ test("parseSubmitterOutput accepts the V2 confirmed result contract", () => {
     state: "confirmed",
     reference: "OTS-1",
     amount: "110",
-    reason: "price_and_submit_absent_for_3_seconds"
+    reason: "price_and_submit_absent_for_3_seconds",
+    timing: { totalMs: 18000 }
   }));
   assert.equal(result.success, true);
   assert.equal(result.state, "confirmed");
   assert.equal(result.providerReference, "OTS-1");
   assert.equal(result.bidAmount, "110");
+  assert.equal(result.timing.totalMs, 18000);
 });
 
 test("parseSubmitterOutput preserves V2 unconfirmed state", () => {

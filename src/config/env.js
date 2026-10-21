@@ -384,6 +384,7 @@ const env = Object.freeze({
   googleCredentialsJsonError: googleCredentialsState.error,
   googleCredentialsSource: googleCredentialsState.source,
   whatsappClientId: safeString(process.env.WHATSAPP_CLIENT_ID),
+  whatsappEnabled: parseBoolean(process.env.WHATSAPP_ENABLED, true),
   whatsappStartupTimeoutMs: parseNumber(process.env.WHATSAPP_STARTUP_TIMEOUT_MS, 90000, {
     integer: true,
     min: 15000,
@@ -393,6 +394,34 @@ const env = Object.freeze({
   whatsappSessionPath: resolveWhatsAppSessionPath(),
   // Backward-compatible alias used by existing modules.
   whatsappSessionDir: resolveWhatsAppSessionPath(),
+  whatsappDirectDatabaseEnabled: parseBoolean(
+    process.env.WHATSAPP_DIRECT_DATABASE_ENABLED,
+    false
+  ),
+  whatsappDirectIngestUrl: safeString(process.env.WHATSAPP_DIRECT_INGEST_URL),
+  whatsappDirectIngestToken: safeString(
+    process.env.WHATSAPP_DIRECT_INGEST_TOKEN || process.env.DASHBOARD_AUTH_TOKEN
+  ),
+  whatsappDirectQueuePath: resolveDataPath(
+    process.env.WHATSAPP_DIRECT_QUEUE_PATH,
+    "data/whatsapp-direct-queue.json"
+  ),
+  whatsappDirectRetryMs: parseNumber(process.env.WHATSAPP_DIRECT_RETRY_MS, 60 * 1000, {
+    integer: true,
+    min: 5000,
+    max: 60 * 60 * 1000
+  }),
+  whatsappBackfillEnabled: parseBoolean(process.env.WHATSAPP_BACKFILL_ENABLED, true),
+  whatsappBackfillHours: parseNumber(process.env.WHATSAPP_BACKFILL_HOURS, 24, {
+    integer: true,
+    min: 1,
+    max: 168
+  }),
+  whatsappBackfillPerGroup: parseNumber(process.env.WHATSAPP_BACKFILL_PER_GROUP, 100, {
+    integer: true,
+    min: 1,
+    max: 500
+  }),
   dedupeStorePath: resolveDataPath(process.env.DEDUPE_STORE_PATH, defaultDedupeStorePath),
   dedupeTtlMs: parseNumber(process.env.DEDUPE_TTL_MS, 6 * 60 * 60 * 1000, {
     integer: true,
@@ -510,6 +539,12 @@ const env = Object.freeze({
     max: 10 * 60 * 1000
   }),
   retentionCleanupEnabled: parseBoolean(process.env.RETENTION_CLEANUP_ENABLED, false),
+  expiredRideCleanupEnabled: parseBoolean(process.env.EXPIRED_RIDE_CLEANUP_ENABLED, false),
+  expiredRideCleanupPollMs: parseNumber(process.env.EXPIRED_RIDE_CLEANUP_POLL_MS, 5 * 60 * 1000, {
+    integer: true,
+    min: 60 * 1000,
+    max: 24 * 60 * 60 * 1000
+  }),
   retentionCleanupPollMs: parseNumber(process.env.RETENTION_CLEANUP_POLL_MS, 24 * 60 * 60 * 1000, {
     integer: true,
     min: 60 * 1000,

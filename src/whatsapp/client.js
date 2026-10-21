@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 const puppeteer = require("puppeteer");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrImage = require("qrcode");
@@ -81,6 +82,35 @@ function resolveBrowserExecutablePath(customPath = "") {
   }
 
   return "";
+}
+
+function buildBrowserUserAgent(versionOutput, platform = process.platform) {
+  const versionMatch = String(versionOutput || "").match(/(?:Google Chrome|Chromium)\s+(\d+)\./i);
+  if (!versionMatch) return "";
+
+  const platformToken = platform === "win32"
+    ? "Windows NT 10.0; Win64; x64"
+    : platform === "darwin"
+      ? "Macintosh; Intel Mac OS X 10_15_7"
+      : "X11; Linux x86_64";
+
+  return `Mozilla/5.0 (${platformToken}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${versionMatch[1]}.0.0.0 Safari/537.36`;
+}
+
+function resolveBrowserUserAgent(executablePath, versionReader = execFileSync) {
+  const browserPath = safeTrim(executablePath) || resolveBrowserExecutablePath();
+  if (!browserPath) return "";
+
+  try {
+    const versionOutput = versionReader(browserPath, ["--version"], {
+      encoding: "utf8",
+      timeout: 5000,
+      windowsHide: true
+    });
+    return buildBrowserUserAgent(versionOutput);
+  } catch (error) {
+    return "";
+  }
 }
 
 function resolveTerminalQrRenderer(customRenderer) {
@@ -246,11 +276,19 @@ function buildStartupTimeoutHint({ tracker, persistedSessionDetected }) {
 }
 
 function createDefaultClient({ sessionPath, clientId, puppeteerOptions, logger }) {
+  const browserUserAgent = resolveBrowserUserAgent(puppeteerOptions?.executablePath);
   if (logger) {
     logger.debug("WhatsApp browser executable selected", {
       stage: "whatsapp_connect",
       fallbackUsed: false,
       reason: safeTrim(puppeteerOptions?.executablePath) || "default puppeteer resolution"
+    });
+    logger.info("WhatsApp browser identity selected", {
+      stage: "whatsapp_connect",
+      fallbackUsed: !browserUserAgent,
+      reason: browserUserAgent
+        ? `Chrome/${browserUserAgent.match(/Chrome\/(\d+)/)?.[1] || "current"}; headless token removed`
+        : "Unable to derive browser version; using whatsapp-web.js default identity"
     });
   }
 
@@ -259,6 +297,7 @@ function createDefaultClient({ sessionPath, clientId, puppeteerOptions, logger }
       clientId,
       dataPath: sessionPath
     }),
+    ...(browserUserAgent ? { userAgent: browserUserAgent } : {}),
     // Only pass executablePath when explicitly supplied in puppeteerOptions/config later.
     puppeteer: {
       headless: true,
@@ -908,5 +947,7 @@ async function initializeWhatsAppClient(options = {}) {
 module.exports = {
   initializeWhatsAppClient,
   createStartupError,
-  createStartupTracker
+  createStartupTracker,
+  buildBrowserUserAgent,
+  resolveBrowserUserAgent
 };

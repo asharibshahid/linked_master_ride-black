@@ -11,6 +11,7 @@ function mapJob(row = {}) {
   return {
     rideId: text(row.ride_id),
     sourceType: text(row.source_type),
+    groupName: text(row.group_name),
     sourceName: text(row.source_name),
     sourceTime: row.source_time ? new Date(row.source_time).toISOString() : "",
     pickupDayDate: text(row.pickup_day_date),
@@ -52,11 +53,40 @@ function canReuseManualBidStatus(value) {
   return ["suggested", "approved", "failed", "submission failed", "submission unconfirmed"].includes(text(value).toLowerCase());
 }
 
+function timestamp(value) {
+  const parsed = new Date(value || "").getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function elapsedMs(start, end) {
+  const startTime = timestamp(start);
+  const endTime = timestamp(end);
+  return startTime !== null && endTime !== null && endTime >= startTime ? endTime - startTime : null;
+}
+
+function submissionTiming(submission = {}) {
+  const queuedAt = text(submission.createdAt);
+  const attemptedAt = text(submission.attemptedAt);
+  const submitActivatedAt = text(submission.submitActivatedAt);
+  const completedAt = text(submission.completedAt);
+  return {
+    queuedAt,
+    attemptedAt,
+    submitActivatedAt,
+    completedAt,
+    queueDurationMs: elapsedMs(queuedAt, attemptedAt),
+    processingDurationMs: elapsedMs(attemptedAt, completedAt),
+    totalDurationMs: elapsedMs(queuedAt, completedAt),
+    workerTiming: submission.workerTiming && typeof submission.workerTiming === "object" ? submission.workerTiming : {}
+  };
+}
+
 function mapWorkspaceBid(row = {}) {
   const payload = row.pricing_payload && typeof row.pricing_payload === "object" ? row.pricing_payload : {};
   const submission = payload.submission && typeof payload.submission === "object" ? payload.submission : {};
   return {
     bidId: text(row.bid_id),
+    bidType: text(row.bid_type),
     rideId: text(row.ride_id),
     otsReference: text(payload.sourceReference || row.ride_refer || row.ride_id),
     source: text(payload.sourceType || row.source_type || "OTS"),
@@ -71,9 +101,13 @@ function mapWorkspaceBid(row = {}) {
     originalFare: row.fare === null || row.fare === undefined ? null : Number(row.fare),
     passengerCount: text(row.passenger_count),
     luggageDetails: text(row.luggage_details),
-    guidePriceMin: row.guide_price_min === null || row.guide_price_min === undefined ? null : Number(row.guide_price_min),
-    guidePriceMax: row.guide_price_max === null || row.guide_price_max === undefined ? null : Number(row.guide_price_max),
-    guidePriceText: text(row.guide_price_text),
+    guidePriceMin: row.guide_price_min === null || row.guide_price_min === undefined
+      ? (payload.guidePriceMin === null || payload.guidePriceMin === undefined ? null : Number(payload.guidePriceMin))
+      : Number(row.guide_price_min),
+    guidePriceMax: row.guide_price_max === null || row.guide_price_max === undefined
+      ? (payload.guidePriceMax === null || payload.guidePriceMax === undefined ? null : Number(payload.guidePriceMax))
+      : Number(row.guide_price_max),
+    guidePriceText: text(row.guide_price_text || payload.guidePriceText),
     bidAmount: row.bid_amount === null || row.bid_amount === undefined ? null : Number(row.bid_amount),
     reason: text(row.reason),
     bidStatus: text(row.bid_status),
@@ -81,6 +115,7 @@ function mapWorkspaceBid(row = {}) {
     submissionState: submissionState(row, payload),
     submissionResult: text(submission.message),
     providerReference: text(submission.providerReference),
+    ...submissionTiming(submission),
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : "",
     updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : ""
   };
@@ -101,6 +136,7 @@ async function loadWorkspaceBidById(client, bidId) {
 }
 
 function mapLink(row = {}) {
+  const status = text(row.status);
   return {
     linkId: text(row.link_id),
     anchorRideId: text(row.anchor_ride_id),
@@ -119,6 +155,8 @@ function mapLink(row = {}) {
     score: Number(row.match_score || 0),
     scoreBreakdown: row.score_breakdown || {},
     reason: text(row.match_reason),
+    status,
+    reviewOnly: ["Review Opportunity", "Archived Review"].includes(status),
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : ""
   };
 }
@@ -167,7 +205,7 @@ function prepareSourceJob(job = {}, sourceType = "OTS", rawCriteria = {}, now = 
     expiresAt: expiresAt.toISOString()
   };
   if (!prepared.pickup || !prepared.dropOff) return null;
-  return cleanSource === "OTS" || evaluateJob(prepared, criteria).eligible ? prepared : null;
+  return cleanSource === "OTS" || prepared.groupName === "WhatsApp Sheet: Upcoming Jobs >79" || evaluateJob(prepared, criteria).eligible ? prepared : null;
 }
 
 class JobLinkerRepository {
@@ -275,6 +313,7 @@ class JobLinkerRepository {
       await client.query("begin");
       let count = 0;
       let added = 0;
+      const acceptedRideIds = [];
       const exclusionReasons = {};
       try {
         const criteriaResult = await client.query(
@@ -304,8 +343,10 @@ class JobLinkerRepository {
                payment_status = excluded.payment_status, pickup_at = excluded.pickup_at,
                source_expires_at = excluded.source_expires_at,
                passenger_count = excluded.passenger_count, luggage_details = excluded.luggage_details,
-               guide_price_min = excluded.guide_price_min, guide_price_max = excluded.guide_price_max,
-               guide_price_text = excluded.guide_price_text, source_metadata = excluded.source_metadata,
+               guide_price_min = coalesce(excluded.guide_price_min, rides.guide_price_min),
+               guide_price_max = coalesce(excluded.guide_price_max, rides.guide_price_max),
+               guide_price_text = coalesce(nullif(excluded.guide_price_text, ''), rides.guide_price_text),
+               source_metadata = excluded.source_metadata,
                deleted_at = null
              returning (xmax = '0'::xid) as inserted`,
             [
@@ -332,14 +373,27 @@ class JobLinkerRepository {
             ]
           );
           count += 1;
+          acceptedRideIds.push(prepared.rideId);
           if (write.rows?.[0]?.inserted === true || write.rows?.[0]?.inserted === "t") added += 1;
         }
         await client.query("commit");
-        return { ok: true, seen: jobs.length, count, added, updated: count - added, excluded: jobs.length - count, exclusionReasons };
+        return { ok: true, seen: jobs.length, count, added, updated: count - added, excluded: jobs.length - count, exclusionReasons, acceptedRideIds };
       } catch (error) {
         await client.query("rollback");
         throw error;
       }
+    });
+  }
+
+  async expireMissingSheetJobs(rideIds = [], worksheetName = "Upcoming Jobs >79") {
+    return this.withClient(async (client) => {
+      const result = await client.query(
+        `update rides set source_expires_at = now()
+         where source_type = 'WhatsApp' and group_name = $2
+           and ride_id <> all($1::text[]) and deleted_at is null and is_protected = false`,
+        [rideIds, `WhatsApp Sheet: ${worksheetName}`]
+      );
+      return { ok: true, affected: result.rowCount };
     });
   }
 
@@ -353,6 +407,25 @@ class JobLinkerRepository {
              and (source_expires_at is null or source_expires_at > now()) order by created_at desc limit 2500`
       );
       return result.rows.map(mapJob);
+    });
+  }
+
+  async getAutoBidSettings() {
+    return this.withClient(async (client) => {
+      const result = await client.query("select value from system_settings where setting_key = 'job_linker_auto_bid' limit 1");
+      return result.rows[0]?.value || {};
+    });
+  }
+
+  async saveAutoBidSettings(value = {}) {
+    return this.withClient(async (client) => {
+      await client.query(
+        `insert into system_settings (setting_key, value)
+         values ('job_linker_auto_bid', $1::jsonb)
+         on conflict (setting_key) do update set value = excluded.value, updated_at = now()`,
+        [JSON.stringify(value)]
+      );
+      return value;
     });
   }
 
@@ -397,7 +470,8 @@ class JobLinkerRepository {
            from bids b
            join rides r on r.ride_id = b.ride_id
           where b.deleted_at is null and b.bid_status = 'Created'
-            and coalesce(b.pricing_payload, '{}'::jsonb) @> '{"jobLinkerManualBid":true}'::jsonb
+            and (coalesce(b.pricing_payload, '{}'::jsonb) @> '{"jobLinkerManualBid":true}'::jsonb
+              or coalesce(b.pricing_payload, '{}'::jsonb) @> '{"jobLinkerAutoBid":true}'::jsonb)
           order by b.created_at asc
           limit $1`,
         [safeLimit]
@@ -413,7 +487,7 @@ class JobLinkerRepository {
           dropOff: text(row.drop_off),
           fare: row.fare === null || row.fare === undefined ? "" : String(row.fare),
           requiredVehicle: text(row.required_vehicle),
-          bidType: "Job Linker Manual Bid",
+          bidType: text(row.bid_type) || "Job Linker Manual Bid",
           bidAmount: row.bid_amount === null || row.bid_amount === undefined ? "" : String(row.bid_amount)
         }
       }));
@@ -425,16 +499,15 @@ class JobLinkerRepository {
     return this.withClient(async (client) => {
       const completedAt = new Date().toISOString();
       const metadata = {
-        submission: {
-          state: "failed",
-          completedAt,
-          message: "Provider submission timed out before a confirmed result. No automatic retry was attempted."
-        }
+        state: "failed",
+        completedAt,
+        message: "Provider submission timed out before a confirmed result. No automatic retry was attempted."
       };
       const result = await client.query(
         `update bids
             set bid_status = 'Submission Failed',
-                pricing_payload = coalesce(pricing_payload, '{}'::jsonb) || $2::jsonb,
+                pricing_payload = jsonb_set(coalesce(pricing_payload, '{}'::jsonb), '{submission}',
+                  coalesce(pricing_payload->'submission', '{}'::jsonb) || $2::jsonb, true),
                 updated_at = now()
           where deleted_at is null and bid_status = 'Submitting'
             and updated_at < now() - ($1::text || ' seconds')::interval`,
@@ -444,7 +517,7 @@ class JobLinkerRepository {
     });
   }
 
-  async reserveManualBid({ rideId, bidAmount, reason = "", actor = "Dashboard", now = new Date() } = {}) {
+  async reserveManualBid({ rideId, bidAmount, reason = "", actor = "Dashboard", bidType = "Job Linker Manual Bid", automated = false, now = new Date() } = {}) {
     const cleanRideId = text(rideId);
     return this.withClient(async (client) => {
       await client.query("begin");
@@ -472,31 +545,36 @@ class JobLinkerRepository {
 
         const createdAt = new Date(now).toISOString();
         const sourceReference = text(ride.refer || ride.ride_id);
+        const cleanBidType = automated ? "Job Linker Auto Bid" : text(bidType) || "Job Linker Manual Bid";
         const metadata = {
-          jobLinkerManualBid: true,
+          jobLinkerManualBid: !automated,
+          jobLinkerAutoBid: Boolean(automated),
           sourceType: "OTS",
           sourceReference,
           sourceReferenceKey: normalizeBusinessReference(sourceReference),
+          guidePriceMin: ride.guide_price_min === null || ride.guide_price_min === undefined ? null : Number(ride.guide_price_min),
+          guidePriceMax: ride.guide_price_max === null || ride.guide_price_max === undefined ? null : Number(ride.guide_price_max),
+          guidePriceText: text(ride.guide_price_text),
           createdBy: text(actor) || "Dashboard",
           submission: { state: "created", createdAt }
         };
         const inserted = existing.rowCount
           ? await client.query(
               `update bids
-                  set bid_type = 'Job Linker Manual Bid', bid_status = 'Created',
+                  set bid_type = $5, bid_status = 'Created',
                       admin_status = 'Approved', bid_amount = $2, reason = $3,
                       pricing_payload = coalesce(pricing_payload, '{}'::jsonb) || $4::jsonb,
                       is_protected = true, updated_at = now()
                 where bid_id = $1 returning *`,
-              [existing.rows[0].bid_id, bidAmount, text(reason), JSON.stringify(metadata)]
+              [existing.rows[0].bid_id, bidAmount, text(reason), JSON.stringify(metadata), cleanBidType]
             )
           : await client.query(
               `insert into bids (
                  ride_id, bid_type, bid_status, admin_status, bid_amount, reason,
                  pricing_payload, is_protected
-               ) values ($1,'Job Linker Manual Bid','Created','Approved',$2,$3,$4::jsonb,true)
+               ) values ($1,$5,'Created','Approved',$2,$3,$4::jsonb,true)
                returning *`,
-              [cleanRideId, bidAmount, text(reason), JSON.stringify(metadata)]
+              [cleanRideId, bidAmount, text(reason), JSON.stringify(metadata), cleanBidType]
             );
         await client.query("update rides set is_protected = true where ride_id = $1", [cleanRideId]);
         await client.query("commit");
@@ -511,7 +589,7 @@ class JobLinkerRepository {
             dropOff: text(ride.drop_off),
             fare: ride.fare === null || ride.fare === undefined ? "" : String(ride.fare),
             requiredVehicle: text(ride.required_vehicle),
-            bidType: "Job Linker Manual Bid",
+            bidType: cleanBidType,
             bidAmount: String(bidAmount)
           }
         };
@@ -529,10 +607,11 @@ class JobLinkerRepository {
       const result = await client.query(
         `update bids
             set bid_status = 'Submitting',
-                pricing_payload = coalesce(pricing_payload, '{}'::jsonb) || $2::jsonb,
+                pricing_payload = jsonb_set(coalesce(pricing_payload, '{}'::jsonb), '{submission}',
+                  coalesce(pricing_payload->'submission', '{}'::jsonb) || $2::jsonb, true),
                 updated_at = now()
           where bid_id = $1 and deleted_at is null and bid_status = 'Created'`,
-        [cleanBidId, JSON.stringify({ submission: { state: "attempting", attemptedAt } })]
+        [cleanBidId, JSON.stringify({ state: "attempting", attemptedAt })]
       );
       if (result.rowCount !== 1) {
         throw new JobLinkerBidError("BID_STATE_CONFLICT", "Bid is not in a submit-ready state.", 409);
@@ -541,25 +620,27 @@ class JobLinkerRepository {
     });
   }
 
-  async completeManualBid({ bidId, success, state = "", bidAmount, providerReference = "", message = "" } = {}) {
+  async completeManualBid({ bidId, success, state = "", bidAmount, providerReference = "", message = "", timing = {} } = {}) {
     const cleanBidId = text(bidId);
     return this.withClient(async (client) => {
       const completedAt = new Date().toISOString();
       const normalizedState = text(state).toLowerCase();
       const bidStatus = success ? "Submitted" : normalizedState === "unconfirmed" ? "Submission Unconfirmed" : "Submission Failed";
+      const workerTiming = timing && typeof timing === "object" ? timing : {};
       const metadata = {
-        submission: {
-          state: success ? "submitted" : normalizedState === "unconfirmed" ? "unconfirmed" : "failed",
-          completedAt,
-          providerReference: text(providerReference),
-          message: text(message)
-        }
+        state: success ? "submitted" : normalizedState === "unconfirmed" ? "unconfirmed" : "failed",
+        completedAt,
+        submitActivatedAt: text(workerTiming.submitActivatedAt),
+        workerTiming,
+        providerReference: text(providerReference),
+        message: text(message)
       };
       const result = await client.query(
         `update bids
             set bid_status = $2,
                 bid_amount = coalesce($3, bid_amount),
-                pricing_payload = coalesce(pricing_payload, '{}'::jsonb) || $4::jsonb,
+                pricing_payload = jsonb_set(coalesce(pricing_payload, '{}'::jsonb), '{submission}',
+                  coalesce(pricing_payload->'submission', '{}'::jsonb) || $4::jsonb, true),
                 updated_at = now()
           where bid_id = $1 and deleted_at is null and bid_status = 'Submitting'`,
         [cleanBidId, bidStatus, bidAmount, JSON.stringify(metadata)]
@@ -678,7 +759,8 @@ class JobLinkerRepository {
     return this.withClient(async (client) => {
       await client.query("begin");
       try {
-        await client.query("delete from linked_rides where status = 'Linker Opportunity'");
+        await client.query("delete from linked_rides where status in ('Linker Opportunity', 'Review Opportunity')");
+        await client.query("delete from linked_rides where status in ('Archived', 'Archived Review') and expires_at <= now()");
         for (const link of links) {
           await client.query(
             `insert into linked_rides (
@@ -686,10 +768,12 @@ class JobLinkerRepository {
                time_gap, distance_between, saving_estimate, status, anchor_ride_id,
                candidate_ride_id, candidate_source, direction, time_gap_minutes,
                distance_miles, match_score, score_breakdown, match_reason, expires_at
-             ) values ($1,$2,$3,$4,$5,$6,$7,$8,'Linker Opportunity',$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17,now() + interval '2 days')`,
+             ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,now() + interval '2 days')
+             on conflict (link_id) do nothing`,
             [
               link.linkId, link.firstRideId, link.secondRideId, link.previousDrop, link.nextPickup,
-              link.timeGap, link.distanceBetween, link.savingEstimate, link.anchorRideId,
+              link.timeGap, link.distanceBetween, link.savingEstimate,
+              link.reviewOnly ? "Review Opportunity" : "Linker Opportunity", link.anchorRideId,
               link.candidateRideId, link.candidateSource, link.direction, link.timeGapMinutes,
               link.distanceMiles, link.score, JSON.stringify(link.scoreBreakdown), link.reason
             ]
@@ -707,11 +791,76 @@ class JobLinkerRepository {
   async listLinks() {
     return this.withClient(async (client) => {
       const result = await client.query(
-        "select * from linked_rides where status = 'Linker Opportunity' and deleted_at is null order by match_score desc, time_gap_minutes asc limit 1000"
+        `select l.* from linked_rides l
+         join rides a on a.ride_id = l.first_ride_id and a.deleted_at is null
+         join rides n on n.ride_id = l.second_ride_id and n.deleted_at is null
+         where l.status = 'Linker Opportunity' and l.deleted_at is null
+           and n.pickup_at > now() and (n.source_expires_at is null or n.source_expires_at > now())
+         order by l.match_score desc, l.time_gap_minutes asc limit 1000`
+      );
+      return result.rows.map(mapLink);
+    });
+  }
+
+  async listReviewLinks() {
+    return this.withClient(async (client) => {
+      const result = await client.query(
+        `select l.* from linked_rides l
+         join rides a on a.ride_id = l.first_ride_id and a.deleted_at is null
+         join rides n on n.ride_id = l.second_ride_id and n.deleted_at is null
+         where l.status = 'Review Opportunity' and l.deleted_at is null
+           and n.pickup_at > now() and (n.source_expires_at is null or n.source_expires_at > now())
+         order by l.match_score desc, l.time_gap_minutes asc limit 1000`
+      );
+      return result.rows.map(mapLink);
+    });
+  }
+
+  async archiveLink(linkId) {
+    return this.withClient(async (client) => {
+      const result = await client.query(
+        `update linked_rides l
+         set status = case when l.status = 'Review Opportunity' then 'Archived Review' else 'Archived' end,
+             expires_at = n.pickup_at, updated_at = now()
+         from rides n where l.link_id = $1 and l.status in ('Linker Opportunity', 'Review Opportunity')
+           and l.second_ride_id = n.ride_id and n.deleted_at is null and n.pickup_at > now()
+           and (n.source_expires_at is null or n.source_expires_at > now())
+         returning l.link_id`,
+        [linkId]
+      );
+      return { ok: result.rowCount === 1, linkId };
+    });
+  }
+
+  async unarchiveLink(linkId) {
+    return this.withClient(async (client) => {
+      const result = await client.query(
+        `update linked_rides l
+         set status = case when l.status = 'Archived Review' then 'Review Opportunity' else 'Linker Opportunity' end,
+             updated_at = now()
+         from rides n where l.link_id = $1 and l.status in ('Archived', 'Archived Review') and l.deleted_at is null
+           and l.second_ride_id = n.ride_id and n.deleted_at is null and n.pickup_at > now()
+           and (n.source_expires_at is null or n.source_expires_at > now())
+         returning l.link_id`,
+        [linkId]
+      );
+      return { ok: result.rowCount === 1, linkId };
+    });
+  }
+
+  async listArchivedLinks() {
+    return this.withClient(async (client) => {
+      const result = await client.query(
+        `select l.* from linked_rides l
+         join rides a on a.ride_id = l.first_ride_id and a.deleted_at is null
+         join rides n on n.ride_id = l.second_ride_id and n.deleted_at is null
+         where l.status in ('Archived', 'Archived Review') and l.deleted_at is null and l.expires_at > now()
+           and n.pickup_at > now() and (n.source_expires_at is null or n.source_expires_at > now())
+         order by l.updated_at desc limit 1000`
       );
       return result.rows.map(mapLink);
     });
   }
 }
 
-module.exports = { JobLinkerRepository, mapJob, mapLink, mapWorkspaceBid, prepareSourceJob };
+module.exports = { JobLinkerRepository, mapJob, mapLink, mapWorkspaceBid, prepareSourceJob, submissionTiming };

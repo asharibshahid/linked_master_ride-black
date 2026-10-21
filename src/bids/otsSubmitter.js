@@ -55,7 +55,8 @@ function parseSubmitterOutput(text) {
         success: Boolean(parsed.success || (parsed.ok && parsed.state === "confirmed")),
         bidAmount: toCell(parsed.bidAmount || parsed.amount),
         providerReference: toCell(parsed.providerReference || parsed.reference),
-        reason: toCell(parsed.reason || parsed.message)
+        reason: toCell(parsed.reason || parsed.message),
+        timing: parsed.timing && typeof parsed.timing === "object" ? parsed.timing : {}
       };
     } catch {
       // Continue looking for a JSON summary line.
@@ -65,7 +66,8 @@ function parseSubmitterOutput(text) {
   return {
     state: "failed",
     success: false,
-    reason: safeTrim(text) || "OTS submitter returned no JSON result"
+    reason: safeTrim(text) || "OTS submitter returned no JSON result",
+    timing: {}
   };
 }
 

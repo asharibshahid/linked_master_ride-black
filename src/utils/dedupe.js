@@ -28,13 +28,13 @@ class DedupeStore {
     }
   }
 
-  hasProcessed(key) {
+  hasProcessed(key, ttlMs = this.ttlMs) {
     if (!key) return false;
 
     const entry = this.store.get(key);
     if (!entry) return false;
 
-    if (Date.now() - entry.processedAt >= this.ttlMs) {
+    if (Date.now() - entry.processedAt >= ttlMs) {
       this.store.delete(key);
       this.#markDirty();
       return false;

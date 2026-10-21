@@ -6,6 +6,11 @@
   const BID_POLL_TIMEOUT_MS = 150000;
   const TOKEN_KEY = "aceDashboardToken";
   const ACTOR_KEY = "aceDashboardActor";
+  const THEME_KEY = "aceDashboardTheme";
+  const LONDON_POSTCODE_AREAS = new Set(["E", "EC", "N", "NW", "SE", "SW", "W", "WC"]);
+  const UK_POSTCODE_AREAS = new Set([
+    "AB", "AL", "B", "BA", "BB", "BD", "BH", "BL", "BN", "BR", "BS", "BT", "CA", "CB", "CF", "CH", "CM", "CO", "CR", "CT", "CV", "CW", "DA", "DD", "DE", "DG", "DH", "DL", "DN", "DT", "DY", "E", "EC", "EH", "EN", "EX", "FK", "FY", "G", "GL", "GU", "GY", "HA", "HD", "HG", "HP", "HR", "HS", "HU", "HX", "IG", "IM", "IP", "IV", "JE", "KA", "KT", "KW", "KY", "L", "LA", "LD", "LE", "LL", "LN", "LS", "LU", "M", "ME", "MK", "ML", "N", "NE", "NG", "NN", "NP", "NR", "NW", "OL", "OX", "PA", "PE", "PH", "PL", "PO", "PR", "RG", "RH", "RM", "S", "SA", "SE", "SG", "SK", "SL", "SM", "SN", "SO", "SP", "SR", "SS", "ST", "SW", "SY", "TA", "TD", "TF", "TN", "TQ", "TR", "TS", "TW", "UB", "W", "WA", "WC", "WD", "WF", "WN", "WR", "WS", "WV", "YO"
+  ]);
   const CATEGORY_META = {
     saloon: { label: "Saloon" },
     estate: { label: "Estate Car" },
@@ -15,7 +20,7 @@
     master: ["OTS LIVE JOBS", "Master", "All currently live OTS quotation requests."],
     bid: ["BID WORKSPACE", "Bid", "Persisted manual OTS submissions and confirmed outcomes."],
     prebook: ["CONFIRMED WORK", "PreBook", "Future confirmed bookings used as Linker anchors."],
-    groups: ["WHATSAPP JOBS", "Groups", "Eligible Saloon and MPV jobs from WhatsApp sources."],
+    groups: ["UPCOMING SHEET", "Groups", "Upcoming jobs from the connected Google Sheet."],
     linker: ["RETURN MATCHING", "Linker", "Realistic return opportunities for confirmed bookings."],
     settings: ["ADMIN", "Settings", "Shared rules, source health, WhatsApp and recovery controls."]
   };
@@ -27,10 +32,14 @@
     pages: { master: 1, bid: 1, prebook: 1, groups: 1, linker: 1 },
     selected: { master: new Set(), prebook: new Set(), groups: new Set() },
     mobileCategory: { master: "saloon", prebook: "saloon", groups: "saloon" },
-    master: { preset: "all", mileage: "all", vehicle: "all", fare: "all", from: "", to: "", sort: "pickupAsc" },
+    master: { preset: "all", mileage: "all", vehicle: "all", location: "all", fare: "all", from: "", to: "", sort: "pickupAsc" },
+    groups: { preset: "all", mileage: "all", vehicle: "all", location: "all", fare: "all", from: "", to: "", sort: "pickupAsc" },
     prebookVehicle: "all",
-    groupVehicle: "all",
-    groupSort: "pickupAsc",
+    prebookLocation: "all",
+    bidQuery: "",
+    bidLocation: "all",
+    linkerLocation: "all",
+    reportPreset: "2",
     whatsappQrUrl: "",
     whatsappTimer: null,
     liveGroups: [],
@@ -53,6 +62,18 @@
     "X-Dashboard-Actor": actor()
   });
 
+  function applyTheme(theme) {
+    const selected = theme === "light" ? "light" : "dark";
+    document.documentElement.dataset.theme = selected;
+    localStorage.setItem(THEME_KEY, selected);
+    const useLight = selected === "dark";
+    const label = useLight ? "Use light theme" : "Use dark theme";
+    $("#theme-icon").textContent = useLight ? "☀" : "☾";
+    $("#theme-toggle").setAttribute("aria-label", label);
+    $("#theme-toggle").title = label;
+    $("meta[name='theme-color']").content = selected === "light" ? "#f3f5f6" : "#0f0f0d";
+  }
+
   function numeric(value) {
     const parsed = Number(String(value ?? "").replace(/[^0-9.-]/g, ""));
     return Number.isFinite(parsed) ? parsed : null;
@@ -63,12 +84,28 @@
     return amount === null ? "-" : `\u00a3${amount.toFixed(2)}`;
   }
 
+  function positiveNumeric(value) {
+    const amount = numeric(value);
+    return amount !== null && amount > 0 ? amount : null;
+  }
+
+  function distanceLabel(value) {
+    const miles = positiveNumeric(value);
+    return miles === null ? "Distance missing" : `${miles} mi`;
+  }
+
   function guidePrice(job = {}) {
-    const minimum = numeric(job.guidePriceMin);
-    const maximum = numeric(job.guidePriceMax);
+    const minimum = positiveNumeric(job.guidePriceMin);
+    const maximum = positiveNumeric(job.guidePriceMax);
     if (minimum !== null && maximum !== null) return `${money(minimum)} - ${money(maximum)}`;
     if (minimum !== null) return `From ${money(minimum)}`;
     return "Guide unavailable";
+  }
+
+  function defaultBidAmount(job = {}) {
+    const maximum = positiveNumeric(job.guidePriceMax);
+    if (maximum !== null) return Math.max(0.01, Math.round((maximum - 5) * 100) / 100);
+    return positiveNumeric(job.guidePriceMin) ?? "";
   }
 
   function dateValue(value, fallback = Number.POSITIVE_INFINITY) {
@@ -94,7 +131,34 @@
   }
 
   function pickupLabel(job) {
-    return job.pickupAt ? formatUkDateTime(job.pickupAt) : [job.pickupDayDate, job.startingTiming].filter(Boolean).join(", ") || "Date missing";
+    const label = job.pickupAt ? formatUkDateTime(job.pickupAt) : [job.pickupDayDate, job.startingTiming].filter(Boolean).join(", ") || "Date missing";
+    const hours = Number(String(job.startingTiming || "").match(/^(\d{2}):\d{2}$/)?.[1]);
+    if (job.sourceType !== "PreBook" || !job.pickupAt || !job.pickupDayDate || !Number.isFinite(hours) || hours < 24) return label;
+    const days = Math.floor(hours / 24);
+    return `${label} (Sheet date ${job.pickupDayDate} + ${days} ${days === 1 ? "day" : "days"})`;
+  }
+
+  function durationLabel(value) {
+    const milliseconds = Number(value);
+    if (!Number.isFinite(milliseconds) || milliseconds < 0) return "";
+    return milliseconds < 60_000 ? `${(milliseconds / 1000).toFixed(1)} sec` : `${Math.floor(milliseconds / 60_000)}m ${Math.round((milliseconds % 60_000) / 1000)}s`;
+  }
+
+  function bidTimingLine(bid = {}) {
+    const sentAt = bid.submitActivatedAt;
+    const completedAt = bid.completedAt;
+    const workerDuration = durationLabel(bid.processingDurationMs || bid.workerTiming?.totalMs);
+    const totalDuration = durationLabel(bid.totalDurationMs);
+    if (sentAt || completedAt) {
+      return [
+        sentAt ? `Bid sent ${formatUkDateTime(sentAt)}` : `Completed ${formatUkDateTime(completedAt)}`,
+        workerDuration ? `OTS worker ${workerDuration}` : "",
+        totalDuration && totalDuration !== workerDuration ? `total ${totalDuration}` : ""
+      ].filter(Boolean).join(" | ");
+    }
+    if (bid.attemptedAt) return `OTS worker started ${formatUkDateTime(bid.attemptedAt)}`;
+    if (bid.queuedAt) return `Queued ${formatUkDateTime(bid.queuedAt)}`;
+    return "";
   }
 
   function otsSyncSummary(source = {}) {
@@ -138,6 +202,37 @@
     if (label.includes("estate")) return "estate";
     if (label.includes("saloon") || label.includes("sedan")) return "saloon";
     return "other";
+  }
+
+  function postcodeAreas(value) {
+    const matches = String(value || "").toUpperCase().matchAll(/\b([A-Z]{1,2})\d{1,2}[A-Z]?(?:\s*\d[A-Z]{2})?\b/g);
+    return [...matches].map((match) => match[1]).filter((area) => UK_POSTCODE_AREAS.has(area));
+  }
+
+  function locationClassForValues(...values) {
+    const areas = values.flatMap(postcodeAreas);
+    if (areas.some((area) => LONDON_POSTCODE_AREAS.has(area))) return "inside";
+    if (areas.length > 0) return "outside";
+    return "unknown";
+  }
+
+  function locationClassForJob(job = {}) {
+    return locationClassForValues(job.pickup, job.dropOff || job.drop_off);
+  }
+
+  function locationClassForLink(link = {}) {
+    const anchor = jobById(link.anchorRideId || link.firstRideId);
+    const candidate = jobById(link.candidateRideId || link.secondRideId);
+    return locationClassForValues(anchor.pickup, anchor.dropOff, candidate.pickup, candidate.dropOff);
+  }
+
+  function locationMatches(value, filter) {
+    return filter === "all" || value === filter;
+  }
+
+  function locationBadge(locationClass) {
+    const labels = { inside: "Inside London", outside: "Outside London", unknown: "Area unknown" };
+    return `<span class="location-pill ${locationClass}">${labels[locationClass] || labels.unknown}</span>`;
   }
 
   function inNumericBand(value, band) {
@@ -312,6 +407,8 @@
     const filter = state.master;
     const rows = (state.data?.master || []).filter((job) => {
       if (job.eligible === false || !searchMatches(job, query)) return false;
+      if (bidBlocksSubmission(bidForRide(job.rideId))) return false;
+      if (!locationMatches(locationClassForJob(job), filter.location)) return false;
       const pickupKey = londonDateKey(job.pickupAt);
       if (filter.preset === "upcoming" && (!pickupKey || pickupKey < today || pickupKey > weekEnd)) return false;
       if (filter.preset === "future" && (!pickupKey || pickupKey <= weekEnd)) return false;
@@ -330,6 +427,7 @@
     const rows = (state.data?.prebook || []).filter((job) => {
       if (!searchMatches(job, query)) return false;
       if (dateValue(job.pickupAt, 0) < Date.now()) return false;
+      if (!locationMatches(locationClassForJob(job), state.prebookLocation)) return false;
       return state.prebookVehicle === "all" || categoryFor(job) === state.prebookVehicle;
     });
     return sortJobs(rows, "pickupAsc");
@@ -337,13 +435,23 @@
 
   function filteredGroups() {
     const query = $("#groups-search").value.trim().toLowerCase();
+    const today = londonDateKey();
+    const weekEnd = shiftDateKey(today, 7 - londonWeekday());
+    const filter = state.groups;
     const rows = (state.data?.groups || []).filter((job) => {
-      if (job.eligible === false || !searchMatches(job, query)) return false;
-      if (state.groupVehicle === "all") return true;
-      const label = String(job.vehicle || job.requiredVehicle || "").toLowerCase();
-      return state.groupVehicle === "saloon" ? label.includes("saloon") : label.includes("mpv") || label.includes("seater") || label.includes("people carrier");
+      if (!searchMatches(job, query)) return false;
+      if (!locationMatches(locationClassForJob(job), filter.location)) return false;
+      const pickupKey = londonDateKey(job.pickupAt);
+      if (filter.preset === "upcoming" && (!pickupKey || pickupKey < today || pickupKey > weekEnd)) return false;
+      if (filter.preset === "future" && (!pickupKey || pickupKey <= weekEnd)) return false;
+      if (filter.preset === "highFare" && (numeric(job.fare) || 0) < 100) return false;
+      if (filter.from && (!pickupKey || pickupKey < filter.from)) return false;
+      if (filter.to && (!pickupKey || pickupKey > filter.to)) return false;
+      if (!inNumericBand(job.distance, filter.mileage) || !inNumericBand(job.fare, filter.fare)) return false;
+      if (filter.vehicle !== "all" && categoryFor(job) !== filter.vehicle) return false;
+      return true;
     });
-    return sortJobs(rows, state.groupSort);
+    return sortJobs(rows, filter.sort);
   }
 
   function paginate(rows, key) {
@@ -367,7 +475,7 @@
     const submitting = state.submittingBids.has(job.rideId);
     const selected = state.selected[key]?.has(job.rideId);
     const expiry = job.expiresAt || job.sourceExpiresAt || job.offerExpiresAt;
-    const bidValue = existingBid?.bidAmount ?? numeric(job.guidePriceMin) ?? "";
+    const bidValue = existingBid?.bidAmount ?? defaultBidAmount(job);
     const guideLine = key === "master" && job.guidePriceText ? `<div class="guide-line">${esc(job.guidePriceText)}</div>` : "";
     const bidHistory = existingBid ? `<div class="bid-history">Persisted bid <b>${money(existingBid.bidAmount)}</b> - ${esc(existingBid.bidStatus || existingBid.submissionState || "Created")}</div>` : "";
     const masterActions = key === "master" ? `<div class="card-actions"><input class="bid-amount" type="number" min="0.01" step="0.01" value="${esc(bidValue)}" data-bid-amount="${esc(job.rideId)}" aria-label="Bid amount for ${esc(job.rideId)}" ${bidLocked || submitting ? "disabled" : ""}><button class="button primary" type="button" data-submit-bid="${esc(job.rideId)}" ${bidLocked || submitting ? "disabled" : ""}>${submitting ? "Submitting" : bidLocked ? esc(existingBid.bidStatus || "Saved") : existingBid ? "Submit" : "Bid"}</button><button class="button copy-button" type="button" data-copy-job="${esc(job.rideId)}">Copy Detail</button></div>${bidLocked ? "" : `<input class="bid-reason" type="text" maxlength="240" data-bid-reason="${esc(job.rideId)}" value="${esc(existingBid?.reason || "")}" placeholder="Reason (optional)">`}` : `<div class="card-actions compact-actions"><button class="button copy-button" type="button" data-copy-job="${esc(job.rideId)}">Copy Detail</button></div>`;
@@ -375,7 +483,7 @@
       <div class="job-card-head"><input type="checkbox" data-select-key="${key}" data-id="${esc(job.rideId)}" ${selected ? "checked" : ""} aria-label="Select ${esc(job.rideId)}"><div class="job-ref">${esc(job.rideId || "Reference missing")}</div><span class="job-source">${esc(job.sourceName || job.sourceType || key)}</span></div>
       <div class="job-time">${esc(pickupLabel(job))}</div>
       <div class="job-route"><div class="route-track"><span></span></div><div class="route-points"><div><small>Pickup</small><strong>${esc(job.pickup || "Pickup missing")}</strong></div><div><small>Drop-off</small><strong>${esc(job.dropOff || "Drop-off missing")}</strong></div></div></div>
-      <div class="job-meta"><span><b>${esc(job.requiredVehicle || job.vehicle || "Vehicle missing")}</b></span><span>${numeric(job.distance) === null ? "Distance missing" : `${esc(numeric(job.distance))} mi`}</span><span class="fare">${esc(key === "master" ? guidePrice(job) : money(job.fare))}</span><span class="status-pill ${job.eligible === false ? "bad" : ""}">${key === "master" ? "Live" : job.eligible === false ? "Review" : "Eligible"}</span></div>
+      <div class="job-meta"><span><b>${esc(job.requiredVehicle || job.vehicle || "Vehicle missing")}</b></span><span>${esc(distanceLabel(job.distance))}</span><span class="fare">${esc(key === "master" ? guidePrice(job) : money(job.fare))}</span>${locationBadge(locationClassForJob(job))}<span class="status-pill ${job.eligible === false ? "bad" : ""}">${key === "master" ? "Live" : job.eligible === false ? "Review" : "Eligible"}</span></div>
       ${guideLine}
       ${expiry ? `<div class="expiry">Expires ${esc(formatUkDateTime(expiry))}</div>` : ""}${key === "master" ? linkedRecommendation(linked) : linked ? linkedRecommendation(linked) : ""}${bidHistory}${masterActions}
     </article>`;
@@ -411,7 +519,7 @@
     banner.innerHTML = `<div><strong>${failed ? "OTS source needs attention" : ready ? "Live OTS source connected" : source.otsEnabled ? "OTS source is starting" : "OTS source is not configured"}</strong><span>${failed ? esc(source.otsLastError) : ready ? esc(otsSyncSummary(source)) : "Master displays the complete live OTS inventory after source synchronization."}</span></div><span class="status-pill ${ready ? "" : failed ? "bad" : "warn"}">${ready ? "Live" : failed ? "Error" : "Waiting"}</span>`;
     const rows = filteredMaster();
     const linkedCount = rows.filter((job) => linkForJob(job.rideId)).length;
-    const fareValue = rows.reduce((total, job) => total + (numeric(job.guidePriceMin) || 0), 0);
+    const fareValue = rows.reduce((total, job) => total + (positiveNumeric(job.guidePriceMin) || 0), 0);
     $("#master-summary").innerHTML = `<div class="stat"><strong>${rows.length}</strong><span>Jobs shown</span></div><div class="stat"><strong>${Number(source.otsRowsAdded || 0)}</strong><span>New OTS rides last sync</span></div><div class="stat"><strong>${Number(source.otsRowsRemoved || 0)}</strong><span>Removed/deleted last sync</span></div><div class="stat"><strong>${linkedCount}</strong><span>Linked opportunities</span></div><div class="stat"><strong>${money(fareValue)}</strong><span>Visible guide minimum</span></div>`;
     renderJobColumns("master", rows);
   }
@@ -424,21 +532,26 @@
   }
 
   function renderBids() {
-    const rows = (state.data?.bids || []).slice().sort((left, right) => dateValue(right.updatedAt, 0) - dateValue(left.updatedAt, 0));
+    const query = state.bidQuery.trim().toLowerCase();
+    const allRows = (state.data?.bids || []).slice().sort((left, right) => dateValue(right.createdAt || right.updatedAt, 0) - dateValue(left.createdAt || left.updatedAt, 0));
+    const rows = allRows.filter((bid) => {
+      if (!locationMatches(locationClassForJob(bid), state.bidLocation)) return false;
+      return !query || [bid.otsReference, bid.rideId, bid.pickup, bid.dropOff, bid.requiredVehicle, bid.bidType, bid.bidStatus, bid.submissionState, bid.bidAmount, bid.reason].join(" ").toLowerCase().includes(query);
+    });
     const page = paginate(rows, "bid");
-    const submitted = rows.filter((bid) => ["submitted", "unconfirmed"].includes(String(bid.bidStatus).toLowerCase())).length;
-    const confirmed = rows.filter((bid) => String(bid.bidStatus).toLowerCase() === "confirmed").length;
-    $("#bid-summary").innerHTML = `<div class="stat"><strong>${rows.length}</strong><span>Persisted bids</span></div><div class="stat"><strong>${submitted}</strong><span>Submitted, unconfirmed</span></div><div class="stat"><strong>${confirmed}</strong><span>Confirmed in PreBook</span></div>`;
+    const submitted = allRows.filter((bid) => ["submitted", "unconfirmed"].includes(String(bid.bidStatus).toLowerCase())).length;
+    const confirmed = allRows.filter((bid) => String(bid.bidStatus).toLowerCase() === "confirmed").length;
+    $("#bid-summary").innerHTML = `<div class="stat"><strong>${rows.length}</strong><span>Bids shown</span></div><div class="stat"><strong>${submitted}</strong><span>Submitted, unconfirmed</span></div><div class="stat"><strong>${confirmed}</strong><span>Confirmed in PreBook</span></div>`;
     $("#bid-list").innerHTML = page.rows.length ? page.rows.map((bid) => {
       const job = jobFromBid(bid);
+      const timingLine = bidTimingLine(bid);
       return `<article class="bid-card ${bidStatusClass(bid)}">
-        <div class="bid-card-head"><div class="job-ref">${esc(bid.otsReference || bid.rideId || "Reference missing")}</div><span class="job-source">${esc(bid.source || "OTS")}</span></div>
-        <div class="job-time">${esc(pickupLabel(job))}</div>
-        <div class="job-route"><div class="route-track"><span></span></div><div class="route-points"><div><small>Pickup</small><strong>${esc(bid.pickup || "Pickup missing")}</strong></div><div><small>Drop-off</small><strong>${esc(bid.dropOff || "Drop-off missing")}</strong></div></div></div>
-        <div class="job-meta"><span><b>${esc(bid.requiredVehicle || "Vehicle missing")}</b></span><span>${numeric(bid.distance) === null ? "Distance missing" : `${esc(numeric(bid.distance))} mi`}</span><span class="fare">Bid ${money(bid.bidAmount)}</span></div>
-        <div class="bid-state"><span class="status-pill ${bidStatusClass(bid) === "failed" ? "bad" : bidStatusClass(bid) ? "" : "warn"}">${esc(bid.bidStatus || "Created")}</span><span class="status-pill warn">${esc(bid.submissionState || "pending")}</span></div>
-        <div class="bid-result">${esc(bid.submissionResult || bid.reason || "Awaiting a provider or booking signal.")}</div>
-        <div class="card-actions compact-actions"><button class="button copy-button" type="button" data-copy-bid="${esc(bid.bidId)}">Copy Detail</button></div>
+        <div class="bid-cell bid-reference"><div class="job-ref">${esc(bid.otsReference || bid.rideId || "Reference missing")}</div><span class="job-source">${esc(String(bid.bidType || "").includes("Auto") ? "AUTO BID" : bid.source || "OTS")}</span><div class="bid-vehicle">${esc(bid.requiredVehicle || "Vehicle missing")}</div>${locationBadge(locationClassForJob(bid))}</div>
+        <div class="bid-cell bid-time"><small>Date &amp; time</small><strong>${esc(pickupLabel(job))}</strong></div>
+        <div class="bid-cell bid-pickup"><small>Pickup</small><strong>${esc(bid.pickup || "Pickup missing")}</strong></div>
+        <div class="bid-cell bid-dropoff"><small>Drop-off</small><strong>${esc(bid.dropOff || "Drop-off missing")}</strong></div>
+        <div class="bid-cell bid-numbers"><small>${esc(distanceLabel(bid.distance))}</small><strong>Bid ${money(bid.bidAmount)}</strong></div>
+        <div class="bid-cell bid-status-cell"><div class="bid-state"><span class="status-pill ${bidStatusClass(bid) === "failed" ? "bad" : bidStatusClass(bid) ? "" : "warn"}">${esc(bid.bidStatus || "Created")}</span><span class="status-pill warn">${esc(bid.submissionState || "pending")}</span></div>${timingLine ? `<div class="bid-timing">${esc(timingLine)}</div>` : ""}<div class="bid-result">${esc(bid.submissionResult || bid.reason || "Awaiting a provider or booking signal.")}</div><div class="card-actions compact-actions"><button class="button copy-button" type="button" data-copy-bid="${esc(bid.bidId)}">Copy Detail</button></div></div>
       </article>`;
     }).join("") : `<div class="empty">No persisted bids yet. Submit one manually from Master.</div>`;
     renderPager("bid", page);
@@ -456,43 +569,201 @@
 
   function renderGroups() {
     const source = state.data?.sourceStatus || {};
+    const rows = state.data?.groups || [];
     const failed = Boolean(source.whatsappSheetLastError);
-    const live = !failed && source.whatsappSheetEnabled && source.whatsappSheetMode !== "off";
+    const sheetLive = !failed && source.whatsappSheetEnabled && source.whatsappSheetMode !== "off";
+    const latestReceived = rows.reduce((latest, job) => {
+      const value = dateValue(job.sourceTime || job.createdAt, 0);
+      return value > latest ? value : latest;
+    }, 0);
+    const available = rows.length > 0;
     const banner = $("#groups-banner");
     banner.classList.toggle("source-error", failed);
-    banner.innerHTML = `<div><strong>${failed ? "WhatsApp source needs attention" : live ? "WhatsApp source sheets connected" : source.whatsappSheetEnabled ? "WhatsApp source is starting" : "WhatsApp source sheets are not configured"}</strong><span>${esc(failed ? source.whatsappSheetLastError : source.whatsappSheetMessage || `${Number(source.whatsappSheetCount || 0)} eligible jobs synchronized.`)}</span></div><span class="status-pill ${live ? "" : failed ? "bad" : "warn"}">${live ? "Live" : failed ? "Error" : "Waiting"}</span>`;
+    const title = failed
+      ? "Groups sheet needs attention"
+      : available
+        ? "Upcoming sheet jobs available"
+        : sheetLive
+          ? "Upcoming sheet connected"
+          : "Groups sheet is starting";
+    const detail = failed
+      ? `${source.whatsappSheetLastError}${source.whatsappSheetLastSyncAt ? ` Last successful sync ${formatUkDateTime(source.whatsappSheetLastSyncAt)}.` : ""}`
+      : available
+        ? `${rows.length} upcoming sheet jobs${source.whatsappSheetLastSyncAt ? `; synced ${formatUkDateTime(source.whatsappSheetLastSyncAt)}` : ""}. Direct WhatsApp rides are hidden here.`
+        : source.whatsappSheetMessage || "Waiting for upcoming sheet jobs.";
+    banner.innerHTML = `<div><strong>${esc(title)}</strong><span>${esc(detail)}</span></div><span class="status-pill ${failed ? "bad" : available || sheetLive ? "" : "warn"}">${failed ? "Error" : available ? "Available" : sheetLive ? "Live" : "Waiting"}</span>`;
     renderJobColumns("groups", filteredGroups());
+  }
+
+  function firstDayOfMonth(key) {
+    return `${key.slice(0, 7)}-01`;
+  }
+
+  function setReportRange(preset = state.reportPreset) {
+    const today = londonDateKey();
+    state.reportPreset = preset;
+    let from = $("#report-from").value;
+    let to = $("#report-to").value;
+    if (preset === "month") {
+      from = firstDayOfMonth(today);
+      to = today;
+    } else if (/^\d+$/.test(preset)) {
+      from = shiftDateKey(today, -(Number(preset) - 1));
+      to = today;
+    }
+    $("#report-from").value = from || today;
+    $("#report-to").value = to || today;
+    $$('[data-report-preset]').forEach((button) => button.classList.toggle("active", button.dataset.reportPreset === preset));
+  }
+
+  function inReportRange(value, from, to) {
+    const key = londonDateKey(value);
+    return Boolean(key && key >= from && key <= to);
+  }
+
+  function downloadOperationsReport() {
+    const from = $("#report-from").value;
+    const to = $("#report-to").value;
+    if (!from || !to || from > to) {
+      showNotice("Choose a valid report date range.", "error");
+      return;
+    }
+    if (!window.OtsSupplierReport?.download) {
+      showNotice("PDF report module is unavailable. Refresh the dashboard and try again.", "error");
+      return;
+    }
+    const received = allJobs().filter((job) => ["OTS", "WhatsApp"].includes(job.sourceType) && inReportRange(job.createdAt || job.sourceTime, from, to));
+    const bids = (state.data?.bids || []).filter((bid) => inReportRange(bid.createdAt, from, to));
+    const links = (state.data?.links || []).filter((link) => {
+      const anchor = jobById(link.anchorRideId || link.firstRideId);
+      return inReportRange(link.createdAt || anchor.pickupAt, from, to);
+    });
+    const otsCount = received.filter((job) => job.sourceType === "OTS").length;
+    const whatsappCount = received.filter((job) => job.sourceType === "WhatsApp").length;
+    const manualCount = bids.filter((bid) => !String(bid.bidType || "").includes("Auto")).length;
+    const autoCount = bids.length - manualCount;
+    window.OtsSupplierReport.download({
+      from,
+      to,
+      generatedAt: formatUkDateTime(new Date()),
+      metrics: [
+        { label: "OTS rides received", value: otsCount },
+        { label: "WhatsApp rides received", value: whatsappCount },
+        { label: "Manual bids", value: manualCount },
+        { label: "Auto bids", value: autoCount },
+        { label: "Linker suggestions", value: links.length }
+      ],
+      rides: received.sort((left, right) => dateValue(left.createdAt || left.sourceTime, 0) - dateValue(right.createdAt || right.sourceTime, 0)).map((job) => ({
+        source: job.sourceType,
+        created: formatUkDateTime(job.createdAt || job.sourceTime),
+        reference: job.rideId,
+        pickup: job.pickup,
+        dropOff: job.dropOff,
+        vehicle: job.requiredVehicle,
+        milesFare: `${distanceLabel(job.distance)} / ${job.sourceType === "OTS" ? guidePrice(job) : money(job.fare)}`
+      })),
+      bids: bids.sort((left, right) => dateValue(left.createdAt, 0) - dateValue(right.createdAt, 0)).map((bid) => ({
+        created: formatUkDateTime(bid.createdAt),
+        type: String(bid.bidType || "").includes("Auto") ? "Auto" : "Manual",
+        reference: bid.otsReference || bid.rideId,
+        route: `${bid.pickup || ""} -> ${bid.dropOff || ""}`,
+        amount: money(bid.bidAmount),
+        status: bid.bidStatus || bid.submissionState,
+        reason: bid.reason || bid.submissionResult
+      })),
+      links: links.map((link) => {
+        const anchor = jobById(link.anchorRideId || link.firstRideId);
+        const candidate = jobById(link.candidateRideId || link.secondRideId);
+        return {
+          created: formatUkDateTime(link.createdAt || anchor.pickupAt),
+          references: `${link.anchorRideId || link.firstRideId} / ${link.candidateRideId || link.secondRideId}`,
+          route: `${anchor.pickup || ""} -> ${anchor.dropOff || ""}; ${candidate.pickup || ""} -> ${candidate.dropOff || ""}`,
+          deadhead: `${link.distanceBetween || "-"}; ${link.timeGap || "-"}`,
+          score: link.score,
+          reason: link.reason
+        };
+      })
+    });
+    showNotice(`PDF operations report downloaded for ${from} to ${to}.`);
   }
 
   function renderLinks() {
     const source = state.data?.sourceStatus || {};
     const failed = Boolean(source.linkerLastError || source.prebookLastError);
     const overview = document.querySelector(".linker-overview");
+    const possible = (state.data?.possibleLinks || []).filter((link) => locationMatches(locationClassForLink(link), state.linkerLocation));
+    const prebook = state.data?.prebook || [];
+    const missingPickupTimes = prebook.filter((job) => !job.pickupAt).length;
     overview.classList.toggle("source-error", failed);
     $("#linker-source-message").textContent = failed
       ? source.linkerLastError || "Linker is unavailable because PreBook could not synchronize."
-      : "PreBook anchors matched to eligible OTS or WhatsApp return work.";
-    const rows = (state.data?.links || []).slice().sort((left, right) => dateValue(jobById(left.anchorRideId).pickupAt) - dateValue(jobById(right.anchorRideId).pickupAt) || String(left.linkId).localeCompare(String(right.linkId)));
+      : possible.length
+        ? `${possible.length} possible ${possible.length === 1 ? "opportunity" : "opportunities"} needs manual review. These are not strict links.`
+        : `Checked ${prebook.length} PreBook bookings against other confirmed PreBook bookings, current OTS and upcoming sheet jobs.${missingPickupTimes ? ` ${missingPickupTimes} have no usable pickup time.` : ""}`;
+    const current = (link) => dateValue(jobById(link.secondRideId).pickupAt, 0) > Date.now();
+    const rows = (state.data?.links || []).filter((link) => current(link) && locationMatches(locationClassForLink(link), state.linkerLocation)).sort((left, right) => dateValue(jobById(left.anchorRideId).pickupAt) - dateValue(jobById(right.anchorRideId).pickupAt) || String(left.linkId).localeCompare(String(right.linkId)));
     const page = paginate(rows, "linker");
-    $("#link-count").textContent = `${rows.length} ${rows.length === 1 ? "opportunity" : "opportunities"}`;
+    $("#link-count").textContent = `${rows.length} ${rows.length === 1 ? "link" : "links"}`;
     $("#link-nav-count").textContent = String(rows.length);
     $("#link-list").innerHTML = page.rows.length ? page.rows.map((link) => {
       const anchor = jobById(link.anchorRideId || link.firstRideId);
       const candidate = jobById(link.candidateRideId || link.secondRideId);
       const score = link.scoreBreakdown || {};
       return `<article class="link-card">
-        <div><div class="link-score">${esc(link.score)}<small>/100</small></div><span class="status-pill">Linked</span></div>
+        <div><div class="link-score">${esc(link.score)}<small>/100</small></div><span class="status-pill">Linked</span>${locationBadge(locationClassForLink(link))}</div>
+        <div class="link-leg"><span class="label">Booked anchor - ${esc(link.anchorRideId || link.firstRideId)}</span><strong>${esc(anchor.pickup || "Pickup missing")} &rarr; ${esc(anchor.dropOff || link.previousDrop || "Drop-off missing")}</strong><small>${esc(pickupLabel(anchor))} - ${esc(anchor.requiredVehicle || "Vehicle missing")}</small></div>
+        <div class="link-arrow">&rarr;</div>
+        <div class="link-leg"><span class="label">${esc(link.candidateSource === "PreBook" ? "Confirmed return" : link.candidateSource || candidate.sourceType || "Candidate")} - ${esc(link.candidateRideId || link.secondRideId)}</span><strong>${esc(candidate.pickup || link.nextPickup || "Pickup missing")} &rarr; ${esc(candidate.dropOff || "Drop-off missing")}</strong><small>${esc(pickupLabel(candidate))} - ${esc(link.timeGap || "Gap missing")}</small></div>
+        <div class="link-outcome"><strong>${link.savingEstimate === null || link.savingEstimate === undefined ? "Saving pending" : `Estimated saving ${money(link.savingEstimate)}`}</strong><p>${esc(link.direction || "Return direction")} - deadhead ${esc(link.distanceBetween || "not available")}</p><div class="score-breakdown"><span>Deadhead ${esc(score.deadhead ?? 0)}</span><span>Availability ${esc(score.availability ?? 0)}</span><span>Return ${esc(score.returnDirection ?? 0)}</span><span>Vehicle ${esc(score.vehicle ?? 0)}</span></div><p>${esc(link.reason || "Match passed current Linker rules.")}</p><button class="button ghost" type="button" data-archive-link="${esc(link.linkId)}">Archive</button></div>
+      </article>`;
+    }).join("") : `<div class="empty">No strict return link is available.</div>`;
+    $("#possible-links").innerHTML = `<div class="possible-links-head"><span class="section-kicker">POSSIBLE RETURNS</span><strong>${possible.length} possible | Manual review only</strong><p>These are feasible same-vehicle sequences but did not pass the strict return-match rules. They never trigger Auto Bid.</p></div>${possible.length ? `<div class="link-list">${possible.map((link) => {
+      const anchor = jobById(link.anchorRideId || link.firstRideId);
+      const candidate = jobById(link.candidateRideId || link.secondRideId);
+      const score = link.scoreBreakdown || {};
+      return `<article class="link-card possible">
+        <div><div class="link-score">${esc(link.score)}<small>/100</small></div><span class="status-pill warn">Review only</span>${locationBadge(locationClassForLink(link))}</div>
         <div class="link-leg"><span class="label">Booked anchor - ${esc(link.anchorRideId || link.firstRideId)}</span><strong>${esc(anchor.pickup || "Pickup missing")} &rarr; ${esc(anchor.dropOff || link.previousDrop || "Drop-off missing")}</strong><small>${esc(pickupLabel(anchor))} - ${esc(anchor.requiredVehicle || "Vehicle missing")}</small></div>
         <div class="link-arrow">&rarr;</div>
         <div class="link-leg"><span class="label">${esc(link.candidateSource || candidate.sourceType || "Candidate")} - ${esc(link.candidateRideId || link.secondRideId)}</span><strong>${esc(candidate.pickup || link.nextPickup || "Pickup missing")} &rarr; ${esc(candidate.dropOff || "Drop-off missing")}</strong><small>${esc(pickupLabel(candidate))} - ${esc(link.timeGap || "Gap missing")}</small></div>
-        <div class="link-outcome"><strong>${link.savingEstimate === null || link.savingEstimate === undefined ? "Saving pending" : `Estimated saving ${money(link.savingEstimate)}`}</strong><p>${esc(link.direction || "Return direction")} - deadhead ${esc(link.distanceBetween || "not available")}</p><div class="score-breakdown"><span>Deadhead ${esc(score.deadhead ?? 0)}</span><span>Availability ${esc(score.availability ?? 0)}</span><span>Return ${esc(score.returnDirection ?? 0)}</span><span>Vehicle ${esc(score.vehicle ?? 0)}</span></div><p>${esc(link.reason || "Match passed current Linker rules.")}</p></div>
+        <div class="link-outcome"><strong>Manual review required</strong><p>Deadhead ${esc(link.distanceBetween || "not available")}</p><div class="score-breakdown"><span>Deadhead ${esc(score.deadhead ?? 0)}</span><span>Availability ${esc(score.availability ?? 0)}</span><span>Return ${esc(score.returnDirection ?? 0)}</span><span>Vehicle ${esc(score.vehicle ?? 0)}</span></div><p>${esc(link.reason || "Does not pass the strict return-match rules.")}</p><button class="button ghost" type="button" data-archive-link="${esc(link.linkId)}">Archive</button></div>
       </article>`;
-    }).join("") : `<div class="empty">No realistic return opportunity is available.</div>`;
+    }).join("")}</div>` : `<div class="empty">No reviewed return suggestion passed the current route checks.</div>`}`;
+    const archived = (state.data?.archivedLinks || []).filter((link) => current(link) && locationMatches(locationClassForLink(link), state.linkerLocation));
+    $("#archived-links").innerHTML = `<details><summary>Archived (${archived.length})</summary>${archived.length ? `<div class="archived-link-list">${archived.map((link) => `<div class="archived-link-row"><strong>${esc(link.anchorRideId)} &rarr; ${esc(link.candidateRideId)}</strong><span>${esc(pickupLabel(jobById(link.secondRideId)))} - ${esc(link.score)}/100</span><button class="button ghost" type="button" data-unarchive-link="${esc(link.linkId)}">Unarchive</button></div>`).join("")}</div>` : `<p>No archived opportunities.</p>`}</details>`;
     renderPager("linker", page);
   }
 
   function healthRow(label, value, status = "") {
     return `<div class="health-row"><strong>${esc(label)}</strong><span class="health-detail ${status ? `status-pill ${status}` : ""}">${esc(value)}</span></div>`;
+  }
+
+  function renderAutoBidSettings() {
+    const autoBid = state.data?.autoBid;
+    const form = $("#auto-bid-form");
+    if (!autoBid || !form) return;
+    const settings = autoBid.settings || {};
+    form.elements.dateScope.value = settings.dateScope || "tomorrow";
+    form.elements.dateFrom.value = settings.dateFrom || "";
+    form.elements.dateTo.value = settings.dateTo || "";
+    form.elements.minimumMiles.value = settings.minimumMiles ?? 70;
+    form.elements.priceDeduction.value = settings.priceDeduction ?? 5;
+    form.elements.minimumExpiryMinutes.value = settings.minimumExpiryMinutes ?? 10;
+    const toggle = $("#auto-bid-toggle");
+    toggle.checked = Boolean(settings.enabled);
+    toggle.disabled = false;
+    $("#auto-bid-settings-status").textContent = settings.enabled ? "On" : "Off";
+    const customRange = settings.dateScope === "custom";
+    const customFrom = settings.dateScope === "customFrom";
+    $("#auto-bid-custom-range").classList.toggle("hidden", !customRange && !customFrom);
+    $("#auto-bid-date-to-field").classList.toggle("hidden", customFrom);
+    form.elements.dateFrom.required = customRange || customFrom;
+    form.elements.dateTo.required = customRange;
+    const vehicles = ["Saloon Car", "Executive Car", "Estate Car", "People Carrier", "Executive People Carrier", "8 Seater Minibus", "Fleet Bus"];
+    const selected = new Set((settings.allowedVehicles || []).map((value) => String(value).toLowerCase()));
+    $("#auto-bid-vehicles").innerHTML = vehicles.map((vehicle) => `<label class="vehicle-check"><input type="checkbox" name="autoBidVehicle" value="${esc(vehicle)}" ${selected.has(String(vehicle).toLowerCase()) ? "checked" : ""}><span>${esc(vehicle)}</span></label>`).join("");
+    const scopeLabels = { today: "today", tomorrow: "tomorrow", futureExcludingTodayTomorrow: "future dates excluding today and tomorrow", currentMonth: "this month", currentMonthExcludingTodayTomorrow: "this month excluding today and tomorrow", futureMonths: "future months", nextMonth: "next month", custom: `${settings.dateFrom || "start"} to ${settings.dateTo || "end"}`, customFrom: `${settings.dateFrom || "the selected date"} onward` };
+    $("#auto-bid-preview").textContent = `${Number(autoBid.preview?.eligibleCount || 0)} currently eligible for ${scopeLabels[settings.dateScope] || "the selected dates"}; ${Number(autoBid.preview?.skippedCount || 0)} skipped. ${autoBid.runtime?.lastDecision || ""}`;
   }
 
   function renderGroupManager() {
@@ -519,7 +790,7 @@
     const source = state.data?.sourceStatus || {};
     $("#source-health").innerHTML = [
       healthRow("OTS Master", source.otsLastError ? source.otsLastError : otsSyncSummary(source), source.otsLastError ? "bad" : ""),
-      healthRow("WhatsApp sheets", source.whatsappSheetLastError ? source.whatsappSheetLastError : `${Number(source.whatsappSheetCount || 0)} eligible jobs`, source.whatsappSheetLastError ? "bad" : ""),
+      healthRow("Groups sheet", source.whatsappSheetLastError ? source.whatsappSheetLastError : `${Number(source.whatsappSheetCount || 0)} upcoming jobs`, source.whatsappSheetLastError ? "bad" : ""),
       healthRow("PreBook", source.prebookLastError || source.prebookMessage || source.prebookMode || "Waiting", source.prebookLastError ? "bad" : source.prebookMode === "demo" ? "warn" : ""),
       healthRow("Linker", source.linkerLastError || `${Number(source.linkCount ?? state.data?.links?.length ?? 0)} current matches`, source.linkerLastError ? "bad" : ""),
       healthRow("Last sync", source.lastSyncAt ? formatUkDateTime(source.lastSyncAt) : "Waiting", source.lastError ? "bad" : "")
@@ -527,6 +798,7 @@
     const trash = state.data?.trash || [];
     $("#trash-list").innerHTML = trash.length ? trash.map((job) => `<div class="trash-row"><div><strong>${esc(job.rideId)}</strong><small>${esc(job.pickup || "Pickup missing")} &rarr; ${esc(job.dropOff || "Drop-off missing")} - deletes ${job.trashDeleteAt ? esc(formatUkDateTime(job.trashDeleteAt)) : "after the recovery window"}</small></div><button class="button" type="button" data-restore="${esc(job.rideId)}">Restore</button></div>`).join("") : `<div class="empty compact">Trash is empty.</div>`;
     renderGroupManager();
+    renderAutoBidSettings();
   }
 
   function renderAll() {
@@ -543,15 +815,29 @@
 
   function updateFilterControls() {
     $$("[data-master-preset]").forEach((button) => button.classList.toggle("active", button.dataset.masterPreset === state.master.preset));
+    $$("[data-groups-preset]").forEach((button) => button.classList.toggle("active", button.dataset.groupsPreset === state.groups.preset));
+    $$("[data-mileage-scope]").forEach((button) => {
+      const filter = state[button.dataset.mileageScope];
+      button.classList.toggle("active", Boolean(filter) && button.dataset.mileageValue === filter.mileage);
+    });
     $("#master-date-from").value = state.master.from;
     $("#master-date-to").value = state.master.to;
     $("#master-mileage").value = state.master.mileage;
     $("#master-vehicle").value = state.master.vehicle;
+    $("#master-location").value = state.master.location;
     $("#master-fare").value = state.master.fare;
     $("#master-sort").value = state.master.sort;
+    $("#groups-date-from").value = state.groups.from;
+    $("#groups-date-to").value = state.groups.to;
+    $("#groups-mileage").value = state.groups.mileage;
+    $("#groups-vehicle").value = state.groups.vehicle;
+    $("#groups-location").value = state.groups.location;
+    $("#groups-fare").value = state.groups.fare;
+    $("#groups-sort").value = state.groups.sort;
     $("#prebook-vehicle").value = state.prebookVehicle;
-    $("#groups-sort").value = state.groupSort;
-    $$("[data-group-vehicle]").forEach((button) => button.classList.toggle("active", button.dataset.groupVehicle === state.groupVehicle));
+    $("#prebook-location").value = state.prebookLocation;
+    $("#bid-location").value = state.bidLocation;
+    $("#linker-location").value = state.linkerLocation;
   }
 
   function refreshList(key) {
@@ -565,6 +851,7 @@
     if (key === "bid") renderBids();
     if (key === "prebook") renderPrebook();
     if (key === "groups") renderGroups();
+    if (key === "linker") renderLinks();
   }
 
   function formatJobDetail(job) {
@@ -576,7 +863,7 @@
       `  - ${job.dropOff || "Drop-off missing"}`,
       `Pick up at ${pickupLabel(job)} (UK time)`,
       `Travelling by ${job.requiredVehicle || job.vehicle || "Vehicle missing"}`,
-      `Distance: ${numeric(job.distance) === null ? "Not supplied" : `${numeric(job.distance)} mi`}`,
+      `Distance: ${positiveNumeric(job.distance) === null ? "Not supplied" : `${positiveNumeric(job.distance)} mi`}`,
       "",
       `Fare: ${money(job.fare)}`
     ].join("\n");
@@ -658,7 +945,6 @@
       }
       await load();
       showNotice(result.message || "Bid queued. Waiting for OTS confirmation.");
-      setTab("bid");
       await pollBidStatus(rideId);
     } catch (error) {
       await load().catch(() => {});
@@ -735,6 +1021,65 @@
     }
   }
 
+  function autoBidFormValues(enabled = Boolean(state.data?.autoBid?.settings?.enabled)) {
+    const form = $("#auto-bid-form");
+    const deductionValue = form.elements.priceDeduction.value.trim();
+    return {
+      enabled,
+      dateScope: form.elements.dateScope.value,
+      dateFrom: form.elements.dateFrom.value,
+      dateTo: form.elements.dateScope.value === "customFrom" ? "" : form.elements.dateTo.value,
+      minimumMiles: Number(form.elements.minimumMiles.value),
+      priceDeduction: deductionValue === "" ? null : Number(deductionValue),
+      minimumExpiryMinutes: Number(form.elements.minimumExpiryMinutes.value),
+      allowedVehicles: $$('[name="autoBidVehicle"]:checked').map((input) => input.value),
+      ...(enabled ? { confirmation: "ENABLE AUTO BID" } : {})
+    };
+  }
+
+  function validAutoBidForm(values) {
+    if (!values.allowedVehicles.length) {
+      showNotice("Select at least one vehicle for Auto Bid.", "error");
+      return false;
+    }
+    if (values.dateScope === "custom" && (!values.dateFrom || !values.dateTo || values.dateFrom > values.dateTo)) {
+      showNotice("Choose a valid Auto Bid date range.", "error");
+      return false;
+    }
+    if (values.dateScope === "customFrom" && !values.dateFrom) {
+      showNotice("Choose the date Auto Bid should start from.", "error");
+      return false;
+    }
+    if (!Number.isFinite(values.priceDeduction) || values.priceDeduction < 0) {
+      showNotice("Enter a valid bid deduction. Use 0 to bid the OTS maximum.", "error");
+      return false;
+    }
+    return true;
+  }
+
+  async function toggleAutoBid() {
+    const enabled = Boolean(state.data?.autoBid?.settings?.enabled);
+    const nextEnabled = !enabled;
+    if (nextEnabled) {
+      const preview = Number(state.data?.autoBid?.preview?.eligibleCount || 0);
+      if (!window.confirm(`Enable Auto Bid? ${preview} current job${preview === 1 ? "" : "s"} match the saved rules. New eligible jobs will be submitted automatically.`)) {
+        $("#auto-bid-toggle").checked = enabled;
+        return;
+      }
+    }
+    const values = autoBidFormValues(nextEnabled);
+    if (!validAutoBidForm(values)) {
+      $("#auto-bid-toggle").checked = enabled;
+      return;
+    }
+    await post(
+      "/api/job-linker/auto-bid/settings",
+      values,
+      nextEnabled ? "Enabling Auto Bid" : "Disabling Auto Bid",
+      `Auto Bid ${nextEnabled ? "enabled" : "disabled"}.`
+    );
+  }
+
   async function runWhatsAppControl(path, body, label) {
     const done = await post(path, body, label, `${label} requested.`);
     if (done) {
@@ -753,42 +1098,102 @@
     state.master.preset = button.dataset.masterPreset;
     refreshList("master");
   }));
+  $$("[data-groups-preset]").forEach((button) => button.addEventListener("click", () => {
+    state.groups.preset = button.dataset.groupsPreset;
+    refreshList("groups");
+  }));
   $("#master-date-from").addEventListener("change", (event) => { state.master.from = event.target.value; refreshList("master"); });
   $("#master-date-to").addEventListener("change", (event) => { state.master.to = event.target.value; refreshList("master"); });
   $("#master-mileage").addEventListener("change", (event) => { state.master.mileage = event.target.value; refreshList("master"); });
   $("#master-vehicle").addEventListener("change", (event) => { state.master.vehicle = event.target.value; refreshList("master"); });
+  $("#master-location").addEventListener("change", (event) => { state.master.location = event.target.value; refreshList("master"); });
   $("#master-fare").addEventListener("change", (event) => { state.master.fare = event.target.value; refreshList("master"); });
   $("#master-sort").addEventListener("change", (event) => { state.master.sort = event.target.value; refreshList("master"); });
+  $("#groups-date-from").addEventListener("change", (event) => { state.groups.from = event.target.value; refreshList("groups"); });
+  $("#groups-date-to").addEventListener("change", (event) => { state.groups.to = event.target.value; refreshList("groups"); });
+  $("#groups-mileage").addEventListener("change", (event) => { state.groups.mileage = event.target.value; refreshList("groups"); });
+  $("#groups-vehicle").addEventListener("change", (event) => { state.groups.vehicle = event.target.value; refreshList("groups"); });
+  $("#groups-location").addEventListener("change", (event) => { state.groups.location = event.target.value; refreshList("groups"); });
+  $("#groups-fare").addEventListener("change", (event) => { state.groups.fare = event.target.value; refreshList("groups"); });
+  $("#groups-sort").addEventListener("change", (event) => { state.groups.sort = event.target.value; refreshList("groups"); });
   $("#prebook-vehicle").addEventListener("change", (event) => { state.prebookVehicle = event.target.value; refreshList("prebook"); });
-  $("#groups-sort").addEventListener("change", (event) => { state.groupSort = event.target.value; refreshList("groups"); });
-
-  $$("[data-group-vehicle]").forEach((button) => button.addEventListener("click", () => {
-    state.groupVehicle = button.dataset.groupVehicle;
-    refreshList("groups");
-  }));
+  $("#prebook-location").addEventListener("change", (event) => { state.prebookLocation = event.target.value; refreshList("prebook"); });
+  $("#bid-location").addEventListener("change", (event) => { state.bidLocation = event.target.value; refreshList("bid"); });
+  $("#linker-location").addEventListener("change", (event) => { state.linkerLocation = event.target.value; refreshList("linker"); });
+  $("#bid-search").addEventListener("input", (event) => { state.bidQuery = event.target.value; state.pages.bid = 1; renderBids(); });
+  $("#bid-clear-filters").addEventListener("click", () => {
+    state.bidQuery = "";
+    state.bidLocation = "all";
+    $("#bid-search").value = "";
+    state.pages.bid = 1;
+    setReportRange("2");
+    renderBids();
+  });
+  $("#prebook-clear-filters").addEventListener("click", () => {
+    state.prebookVehicle = "all";
+    state.prebookLocation = "all";
+    $("#prebook-search").value = "";
+    refreshList("prebook");
+  });
+  $("#linker-clear-filters").addEventListener("click", () => {
+    state.linkerLocation = "all";
+    refreshList("linker");
+  });
+  $("#download-report").addEventListener("click", downloadOperationsReport);
+  $("#theme-toggle").addEventListener("click", () => applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light"));
+  $$('[data-report-preset]').forEach((button) => button.addEventListener("click", () => setReportRange(button.dataset.reportPreset)));
+  [$("#report-from"), $("#report-to")].forEach((input) => input.addEventListener("change", () => setReportRange("custom")));
 
   $$("[data-date-preset]").forEach((button) => button.addEventListener("click", () => {
     const today = londonDateKey();
     const preset = button.dataset.datePreset;
-    if (preset === "today") state.master.from = state.master.to = today;
-    if (preset === "tomorrow") state.master.from = state.master.to = shiftDateKey(today, 1);
-    if (preset === "week") { state.master.from = today; state.master.to = shiftDateKey(today, 7 - londonWeekday()); }
-    if (preset === "month") { state.master.from = today; state.master.to = monthEnd(today); }
+    const scope = button.dataset.dateScope || "master";
+    const filter = state[scope];
+    if (!filter) return;
+    if (preset === "today") filter.from = filter.to = today;
+    if (preset === "tomorrow") filter.from = filter.to = shiftDateKey(today, 1);
+    if (preset === "week") { filter.from = today; filter.to = shiftDateKey(today, 7 - londonWeekday()); }
+    if (preset === "month") { filter.from = today; filter.to = monthEnd(today); }
     if (preset === "nextMonth") {
       const [year, month] = today.split("-").map(Number);
-      state.master.from = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
-      state.master.to = new Date(Date.UTC(year, month + 1, 0)).toISOString().slice(0, 10);
+      filter.from = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+      filter.to = new Date(Date.UTC(year, month + 1, 0)).toISOString().slice(0, 10);
     }
-    refreshList("master");
+    refreshList(scope);
+  }));
+
+  $$("[data-mileage-scope]").forEach((button) => button.addEventListener("click", () => {
+    const filter = state[button.dataset.mileageScope];
+    if (!filter) return;
+    filter.mileage = button.dataset.mileageValue;
+    refreshList(button.dataset.mileageScope);
   }));
 
   $("#master-clear-filters").addEventListener("click", () => {
-    state.master = { preset: "all", mileage: "all", vehicle: "all", fare: "all", from: "", to: "", sort: "pickupAsc" };
+    state.master = { preset: "all", mileage: "all", vehicle: "all", location: "all", fare: "all", from: "", to: "", sort: "pickupAsc" };
     $("#master-search").value = "";
     refreshList("master");
   });
+  $("#groups-clear-filters").addEventListener("click", () => {
+    state.groups = { preset: "all", mileage: "all", vehicle: "all", location: "all", fare: "all", from: "", to: "", sort: "pickupAsc" };
+    $("#groups-search").value = "";
+    refreshList("groups");
+  });
 
   document.addEventListener("click", async (event) => {
+    const unarchiveButton = event.target.closest("[data-unarchive-link]");
+    if (unarchiveButton) {
+      unarchiveButton.disabled = true;
+      const done = await post(`/api/job-linker/links/${encodeURIComponent(unarchiveButton.dataset.unarchiveLink)}/unarchive`, {}, "Restoring link", "Link restored.");
+      if (!done && unarchiveButton.isConnected) unarchiveButton.disabled = false;
+      return;
+    }
+    const archiveButton = event.target.closest("[data-archive-link]");
+    if (archiveButton) {
+      archiveButton.disabled = true;
+      await post(`/api/job-linker/links/${encodeURIComponent(archiveButton.dataset.archiveLink)}/archive`, {}, "Archiving link", "Link archived.");
+      return;
+    }
     const pageButton = event.target.closest("[data-page-key]");
     if (pageButton && !pageButton.disabled) {
       state.pages[pageButton.dataset.pageKey] = Number(pageButton.dataset.page);
@@ -864,6 +1269,24 @@
       trashRetentionHours: Number(form.get("trashRetentionHours"))
     }, "Saving rules");
   });
+  $("#auto-bid-toggle").addEventListener("click", toggleAutoBid);
+  $("#auto-bid-form").elements.dateScope.addEventListener("change", (event) => {
+    const customRange = event.target.value === "custom";
+    const customFrom = event.target.value === "customFrom";
+    $("#auto-bid-custom-range").classList.toggle("hidden", !customRange && !customFrom);
+    $("#auto-bid-date-to-field").classList.toggle("hidden", customFrom);
+    event.currentTarget.form.elements.dateFrom.required = customRange || customFrom;
+    event.currentTarget.form.elements.dateTo.required = customRange;
+    if (customFrom) event.currentTarget.form.elements.dateTo.value = "";
+  });
+  $("#auto-bid-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const currentEnabled = Boolean(state.data?.autoBid?.settings?.enabled);
+    const values = autoBidFormValues(currentEnabled);
+    if (!validAutoBidForm(values)) return;
+    if (currentEnabled && !window.confirm("Auto Bid is ON. Apply these rules immediately to new eligible jobs?")) return;
+    post("/api/job-linker/auto-bid/settings", values, "Saving Auto Bid rules", "Auto Bid rules saved.");
+  });
   $("#whatsapp-status-button").addEventListener("click", refreshWhatsAppStatus);
   $("#whatsapp-groups-button").addEventListener("click", loadGroupManager);
   $("#whatsapp-restart-button").addEventListener("click", () => runWhatsAppControl("/api/whatsapp/restart", {}, "Restarting WhatsApp"));
@@ -887,10 +1310,12 @@
 
   (async () => {
     try {
+      applyTheme(document.documentElement.dataset.theme);
       const configResponse = await fetch("/api/config", { cache: "no-store" });
       const config = await configResponse.json();
       if (!config.ok || !config.apiBaseUrl) throw new Error(config.message || "Dashboard API is not configured.");
       state.apiBaseUrl = config.apiBaseUrl.replace(/\/$/, "");
+      setReportRange("2");
       const requestedTab = window.location.hash.replace("#", "");
       state.tab = VIEW_META[requestedTab] ? requestedTab : "master";
       if (!token()) showLogin();
@@ -901,4 +1326,7 @@
       $("#live-status").className = "connection bad";
     }
   })();
+  setInterval(() => {
+    if (state.tab === "linker" && token()) load();
+  }, 60000);
 })();

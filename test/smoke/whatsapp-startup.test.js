@@ -4,7 +4,11 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
-const { initializeWhatsAppClient } = require("../../src/whatsapp/client");
+const {
+  initializeWhatsAppClient,
+  buildBrowserUserAgent,
+  resolveBrowserUserAgent
+} = require("../../src/whatsapp/client");
 const { createSilentLogger } = require("../helpers");
 
 class FakeWhatsAppClient extends EventEmitter {
@@ -50,6 +54,26 @@ function removeDirectory(dirPath) {
   if (!dirPath) return;
   fs.rmSync(dirPath, { recursive: true, force: true });
 }
+
+test("WhatsApp browser identity uses the installed Chrome major without a headless token", () => {
+  const userAgent = buildBrowserUserAgent("Google Chrome 149.0.7827.102", "linux");
+
+  assert.match(userAgent, /Chrome\/149\.0\.0\.0/);
+  assert.doesNotMatch(userAgent, /HeadlessChrome/i);
+});
+
+test("WhatsApp browser identity reads the configured executable safely", () => {
+  let invocation;
+  const userAgent = resolveBrowserUserAgent("/usr/bin/google-chrome", (file, args, options) => {
+    invocation = { file, args, options };
+    return "Google Chrome 149.0.7827.102\n";
+  });
+
+  assert.equal(invocation.file, "/usr/bin/google-chrome");
+  assert.deepEqual(invocation.args, ["--version"]);
+  assert.equal(invocation.options.timeout, 5000);
+  assert.match(userAgent, /Chrome\/149\.0\.0\.0/);
+});
 
 test("WhatsApp startup resolves when ready event arrives", async () => {
   const tempPath = createTempSessionPath();

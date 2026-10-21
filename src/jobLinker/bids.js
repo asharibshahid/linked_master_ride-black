@@ -71,7 +71,8 @@ function normalizeSubmitResult(result = {}) {
     success: Boolean(result.success || (result.ok && state === "confirmed")),
     bidAmount: cleanText(result.bidAmount),
     providerReference: cleanText(result.providerReference),
-    message: cleanText(result.reason || result.message)
+    message: cleanText(result.reason || result.message),
+    timing: result.timing && typeof result.timing === "object" ? result.timing : {}
   };
 }
 
@@ -111,7 +112,8 @@ function createJobLinkerBidService(options = {}) {
           bidId: reservation.bidId,
           success: false,
           bidAmount: reservation.trustedBid.bidAmount,
-          message: publicProviderFailure(errorDetail)
+          message: publicProviderFailure(errorDetail),
+          timing: error?.timing && typeof error.timing === "object" ? error.timing : {}
         });
         logger.warn("Manual OTS bid failed", {
           stage: "job_linker_bid",
@@ -127,7 +129,8 @@ function createJobLinkerBidService(options = {}) {
           success: false,
           state: result.state,
           bidAmount: reservation.trustedBid.bidAmount,
-          message: publicProviderFailure(result.message || "OTS submitter returned an unsuccessful result.")
+          message: publicProviderFailure(result.message || "OTS submitter returned an unsuccessful result."),
+          timing: result.timing
         });
         return;
       }
@@ -137,9 +140,14 @@ function createJobLinkerBidService(options = {}) {
         state: result.state,
         bidAmount: result.bidAmount || reservation.trustedBid.bidAmount,
         providerReference: result.providerReference,
-        message: result.message || "OTS provider confirmed the submission."
+        message: result.message || "OTS provider confirmed the submission.",
+        timing: result.timing
       });
-      logger.info("Manual OTS bid submitted", { stage: "job_linker_bid", reason: reservation.trustedBid.rideId });
+      const elapsed = Number(result.timing?.totalMs);
+      logger.info("OTS bid submission completed", {
+        stage: "job_linker_bid",
+        reason: `${reservation.trustedBid.bidType}: ${reservation.trustedBid.rideId}${Number.isFinite(elapsed) ? ` in ${(elapsed / 1000).toFixed(1)}s` : ""}`
+      });
     } catch (error) {
       if (error?.code === "BID_STATE_CONFLICT") return;
       logger.warn("Manual OTS bid worker failed", {
@@ -168,12 +176,13 @@ function createJobLinkerBidService(options = {}) {
 
   async function drain() {
     if (typeof submitBid !== "function") return;
+    if (activeBidIds.size > 0) return;
     if (typeof repository.failStaleSubmittingBids === "function") {
       await repository.failStaleSubmittingBids(staleTimeoutMs);
     }
     if (typeof repository.listPendingManualBids !== "function") return;
-    const pending = await repository.listPendingManualBids(10);
-    pending.forEach(enqueue);
+    const pending = await repository.listPendingManualBids(1);
+    if (pending[0]) enqueue(pending[0]);
   }
 
   function start() {
@@ -206,6 +215,8 @@ function createJobLinkerBidService(options = {}) {
       bidAmount,
       reason: cleanText(input.reason),
       actor: cleanText(input.actor) || "Dashboard",
+      bidType: cleanText(input.bidType) || "Job Linker Manual Bid",
+      automated: input.automated === true,
       now: options.now ? options.now() : new Date()
     });
     enqueue(reservation);
@@ -217,7 +228,11 @@ function createJobLinkerBidService(options = {}) {
   }
 
   if (options.autoStart !== false) start();
-  return { submitManualBid, drain, start, stop };
+  function isBusy() {
+    return activeBidIds.size > 0;
+  }
+
+  return { submitManualBid, drain, start, stop, isBusy };
 }
 
 module.exports = {

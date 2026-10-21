@@ -38,7 +38,8 @@ const NORMALIZATION_SCHEMA = {
     distance: { type: "string" },
     fare: { type: "string" },
     required_vehicle: { type: "string" },
-    payment_status: { type: "string" }
+    payment_status: { type: "string" },
+    special_instructions: { type: "string" }
   },
   required: [...NORMALIZATION_FIELDS]
 };
@@ -57,6 +58,7 @@ const SYSTEM_INSTRUCTION = [
   "pickup must contain only the origin.",
   "drop_off must contain only the destination.",
   "Never put fare, payment, flight, reference, or time text into pickup or drop_off.",
+  "Put booster or child seat requirements in special_instructions, never in a location.",
   "required_vehicle must be a clean vehicle type only, or empty string.",
   "If the source says from X to Y, X -> Y, X - Y, or pickup X drop Y, split them correctly.",
   "Only clean formatting and place source text into the matching schema fields.",

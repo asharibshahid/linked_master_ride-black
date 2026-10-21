@@ -7,6 +7,7 @@ const { executeWithRetry, defaultShouldRetry } = require("../utils/retry");
 
 const DEFAULT_TIMEOUT_MS = 12000;
 const NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org/search";
+const POSTCODES_IO_BASE_URL = "https://api.postcodes.io";
 const DEFAULT_USER_AGENT = "ride-bot/1.0 (geocode)";
 const BULLET_CHARS_PATTERN = /[\u2022\u00B7\u25AA\u25E6\u25CF\u25C6\u25BA]/g;
 const MOJIBAKE_BULLET_PATTERN = /(â€¢|â—|â—¦)/g;
@@ -17,6 +18,18 @@ const ADDRESS_LABEL_PATTERN =
 const NON_ADDRESS_SECTION_PATTERN =
   /^(landing|route|head\s*passenger|mobile\s*number|flight|arriving\s*from|expires?)\b/i;
 const UK_POSTCODE_PATTERN = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
+const UK_OUTCODE_AT_END_PATTERN = /(?:^|[\s,])([A-Z]{1,2}\d[A-Z\d]?)\s*$/i;
+const UK_BOUNDS = Object.freeze({ minLat: 49.8, maxLat: 60.95, minLng: -8.7, maxLng: 1.8 });
+const UK_VIEWBOX = "-8.7,60.95,1.8,49.8";
+const UK_AIRPORTS = Object.freeze([
+  { pattern: /\b(?:lhr|heathrow)\b/i, lat: 51.47, lng: -0.4543, name: "Heathrow Airport, UK" },
+  { pattern: /\b(?:lgw|gatwick)\b/i, lat: 51.1537, lng: -0.1821, name: "Gatwick Airport, UK" },
+  { pattern: /\b(?:stn|stansted)\b/i, lat: 51.885, lng: 0.235, name: "Stansted Airport, UK" },
+  { pattern: /\b(?:ltn|luton airport)\b/i, lat: 51.8763, lng: -0.3717, name: "Luton Airport, UK" },
+  { pattern: /\b(?:lcy|london city airport)\b/i, lat: 51.5053, lng: 0.0553, name: "London City Airport, UK" },
+  { pattern: /\b(?:bhx|birmingham airport)\b/i, lat: 52.4524, lng: -1.7435, name: "Birmingham Airport, UK" },
+  { pattern: /\b(?:man|manchester airport)\b/i, lat: 53.3537, lng: -2.275, name: "Manchester Airport, UK" }
+]);
 
 function cleanAddressLine(line) {
   return String(line || "")
@@ -97,6 +110,60 @@ function extractPostcode(address) {
   return safeTrim(match?.[1] || "").toUpperCase();
 }
 
+function extractOutcode(address) {
+  const fullPostcode = extractPostcode(address);
+  if (fullPostcode) return fullPostcode.split(/\s+/)[0];
+  const match = safeTrim(address).toUpperCase().match(UK_OUTCODE_AT_END_PATTERN);
+  return safeTrim(match?.[1] || "");
+}
+
+function isWithinUkBounds(lat, lng) {
+  return (
+    isValidLatLng(lat, lng) &&
+    lat >= UK_BOUNDS.minLat &&
+    lat <= UK_BOUNDS.maxLat &&
+    lng >= UK_BOUNDS.minLng &&
+    lng <= UK_BOUNDS.maxLng
+  );
+}
+
+function findKnownUkAirport(address) {
+  const text = safeTrim(address);
+  const airport = UK_AIRPORTS.find((entry) => entry.pattern.test(text));
+  if (!airport) return null;
+  return { lat: airport.lat, lng: airport.lng, formatted_address: airport.name };
+}
+
+async function resolveUkPostcode(address, { httpClient, timeoutMs, logger }) {
+  const postcode = extractPostcode(address);
+  const outcode = extractOutcode(address);
+  if (!postcode && !outcode) return null;
+
+  const path = postcode
+    ? `/postcodes/${encodeURIComponent(postcode.replace(/\s+/g, ""))}`
+    : `/outcodes/${encodeURIComponent(outcode)}`;
+
+  try {
+    const response = await httpClient.get(`${POSTCODES_IO_BASE_URL}${path}`, { timeout: timeoutMs });
+    const result = response?.data?.result;
+    const lat = Number(result?.latitude);
+    const lng = Number(result?.longitude);
+    if (!isWithinUkBounds(lat, lng)) return null;
+    return {
+      lat,
+      lng,
+      formatted_address: safeTrim(result?.admin_district || result?.region || postcode || outcode)
+    };
+  } catch (error) {
+    logger.debug("UK postcode lookup missed; using bounded address search", {
+      stage: "geocoding",
+      reason: postcode ? "postcode_lookup_failed" : "outcode_lookup_failed",
+      addressFingerprint: addressFingerprint(postcode || outcode)
+    });
+    return null;
+  }
+}
+
 function simplifyAddress(address) {
   const text = safeTrim(String(address || ""));
   if (!text) return "";
@@ -117,13 +184,14 @@ function simplifyAddress(address) {
 
 function buildGeocodeCandidates(address) {
   const exact = cleanAddressForGeocoding(address);
+  const searchableExact = /^SEN$/i.test(exact) ? "London Southend Airport, UK" : exact;
   const postcode = extractPostcode(exact);
-  const simplified = simplifyAddress(exact);
+  const simplified = simplifyAddress(searchableExact);
   const seen = new Set();
   const candidates = [];
 
   for (const candidate of [
-    { attemptType: "exact", query: exact },
+    { attemptType: "exact", query: searchableExact },
     { attemptType: "postcode", query: postcode },
     { attemptType: "simplified", query: simplified }
   ]) {
@@ -171,7 +239,11 @@ async function geocodeWithNominatim({
     const requestParams = {
       q: cleanedAddress,
       format: "jsonv2",
-      limit: 1
+      limit: 5,
+      addressdetails: 1,
+      countrycodes: "gb",
+      bounded: 1,
+      viewbox: UK_VIEWBOX
     };
 
     logger.debug("Geocoding request prepared", {
@@ -226,7 +298,13 @@ async function geocodeWithNominatim({
       }
     );
 
-    const first = Array.isArray(response.data) ? response.data[0] : null;
+    const first = Array.isArray(response.data)
+      ? response.data.find((entry) => {
+          const lat = Number(entry?.lat);
+          const lng = Number(entry?.lon);
+          return entry?.address?.country_code?.toLowerCase() === "gb" && isWithinUkBounds(lat, lng);
+        })
+      : null;
     if (!first) {
       const summary = summarizeKnownError(null, {
         stage: "geocoding",
@@ -345,6 +423,16 @@ function createGeocoder(options = {}) {
         return null;
       }
 
+      const knownAirport = findKnownUkAirport(originalAddress);
+      if (knownAirport) return knownAirport;
+
+      const postcodeResult = await resolveUkPostcode(originalAddress, {
+        httpClient,
+        timeoutMs,
+        logger
+      });
+      if (postcodeResult) return postcodeResult;
+
       const providerHandler = PROVIDERS[provider];
       if (!providerHandler) {
         logger.warn("Geocoding skipped: unsupported provider", {
@@ -417,6 +505,9 @@ module.exports = {
   geocodeAddress,
   createGeocoder,
   cleanAddressForGeocoding,
-  buildGeocodeCandidates
+  buildGeocodeCandidates,
+  extractOutcode,
+  isWithinUkBounds,
+  findKnownUkAirport
 };
 

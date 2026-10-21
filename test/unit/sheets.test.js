@@ -7,6 +7,7 @@ const { validateSheetsConfig } = require("../../src/sheets/sheetsClient");
 const {
   verifyWorksheetTargetsReady,
   ensureWorksheetWithHeaders,
+  ensureRideInstructionHeader,
   applyFinalBidAssignedDriverValidation,
   applyTextFormatForHeaders
 } = require("../../src/app");
@@ -105,7 +106,7 @@ test("buildAppendRange uses quoted worksheet names safely", () => {
   assert.equal(range, "'Ride Sheet'");
 });
 
-test("buildSheetRow maps strict 11-column schema in exact order", () => {
+test("buildSheetRow maps strict schema in exact order", () => {
   const row = buildSheetRow({
     refer: "RID-20260415-AB12",
     group_name: "Dispatch Group",
@@ -133,7 +134,8 @@ test("buildSheetRow maps strict 11-column schema in exact order", () => {
     "10",
     "1200.00",
     "Estate",
-    "cash"
+    "cash",
+    ""
   ]);
 });
 
@@ -181,10 +183,11 @@ test("buildSheetRow keeps blank strings for missing strict fields", () => {
     pickup: "STN"
   });
 
-  assert.equal(row.length, 12);
+  assert.equal(row.length, 13);
   assert.equal(row[0], "RID-20260415-AB12");
   assert.equal(row[6], "STN");
   assert.equal(row[11], "");
+  assert.equal(row[12], "");
 });
 
 test("buildSheetRowObject maps exact sheet headers to ride fields and aliases", () => {
@@ -215,7 +218,8 @@ test("buildSheetRowObject maps exact sheet headers to ride fields and aliases", 
     Distance: "98",
     Fare: "2500.00",
     "Required Vehicle": "Saloon Car",
-    "Payment Status": "cash"
+    "Payment Status": "cash",
+    "Special Instructions": ""
   });
 });
 
@@ -377,6 +381,31 @@ test("verifyWorksheetTargetsReady accepts rides, review, and upcoming sheets wit
     ],
     logger: { info: () => {}, debug: () => {} }
   });
+});
+
+test("ride sheet header upgrade adds only the new trailing column", async () => {
+  const calls = [];
+  const oldHeaders = [
+    "Refer", "Group Name", "Source Name", "Source Time", "Pickup Day & Date",
+    "Starting Timing", "Pickup", "Drop Off", "Distance", "Fare",
+    "Required Vehicle", "Payment Status"
+  ];
+  await ensureRideInstructionHeader({
+    sheetsClient: {
+      spreadsheets: {
+        values: {
+          get: async () => ({ data: { values: [oldHeaders] } }),
+          update: async (request) => { calls.push(request); return { data: {} }; }
+        }
+      }
+    },
+    spreadsheetId: "sheet-id",
+    worksheetName: "Rides",
+    logger: { info() {}, warn() {}, debug() {} }
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].range, "'Rides'!M1");
+  assert.deepEqual(calls[0].requestBody.values, [["Special Instructions"]]);
 });
 
 test("ensureWorksheetWithHeaders creates missing Final Bid worksheet and initializes headers", async () => {

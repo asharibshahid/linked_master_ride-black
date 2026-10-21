@@ -317,6 +317,51 @@ class DispatchDatabaseRepository {
     });
   }
 
+  async saveRawMessage(record = {}) {
+    const messageId = toCell(record.messageId || record.message_id);
+    if (!messageId) return { ok: false, skipped: true, reason: "message_id_missing" };
+    const sourceTime = toIsoOrNull(record.sourceTime || record.source_time) || new Date().toISOString();
+    const payload = toCell(record.payload);
+    return this.withClient(async (client) => {
+      await client.query(
+        `insert into raw_messages (
+           message_id, chat_id, group_name, source_time, payload, parsed,
+           parse_reason, retention_class, expires_at, deleted_at
+         ) values ($1,$2,$3,$4,$5,false,'','temporary',$4::timestamptz + interval '7 days',null)
+         on conflict (message_id) do update set
+           chat_id = excluded.chat_id,
+           group_name = excluded.group_name,
+           source_time = excluded.source_time,
+           payload = excluded.payload,
+           expires_at = excluded.expires_at,
+           deleted_at = null`,
+        [messageId, toCell(record.chatId || record.chat_id), toCell(record.groupName || record.group_name), sourceTime, payload]
+      );
+      return { ok: true, messageId };
+    });
+  }
+
+  async markRawMessageParsed(record = {}) {
+    const messageId = toCell(record.messageId || record.message_id);
+    if (!messageId) return { ok: false, skipped: true, reason: "message_id_missing" };
+    const rideId = toCell(record.rideId || record.ride_id);
+    return this.withClient(async (client) => {
+      const result = await client.query(
+        `update raw_messages
+            set parsed = $2,
+                ride_id = case
+                  when $3 = '' then ride_id
+                  when exists (select 1 from rides where ride_id = $3) then $3
+                  else null
+                end,
+                parse_reason = $4
+          where message_id = $1`,
+        [messageId, record.parsed !== false, rideId, toCell(record.reason || record.parse_reason)]
+      );
+      return { ok: true, messageId, updated: result.rowCount };
+    });
+  }
+
   async markNeedsReview(record = {}, reason = "") {
     return this.upsertRide(record, {
       status: "Needs Review",

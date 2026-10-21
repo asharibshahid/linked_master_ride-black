@@ -14,6 +14,7 @@ const { createOsrmClient } = require("./routing/osrm");
 const { createSheetsClient, validateSheetsConfig } = require("./sheets/sheetsClient");
 const { createAppendRow, buildHeaderRange } = require("./sheets/appendRow");
 const { createUpcomingJobAppender } = require("./sheets/upcomingJobs");
+const { startExpiredRideCleanupPolling } = require("./sheets/expiredRideCleanup");
 const {
   FINAL_BID_HEADERS,
   buildFinalBidSheetRow,
@@ -85,6 +86,8 @@ const {
 } = require("./retention/cleanup");
 const { createMessageHandler } = require("./whatsapp/messageHandler");
 const { initializeWhatsAppClient } = require("./whatsapp/client");
+const { createWhatsAppBackfillRunner } = require("./whatsapp/backfill");
+const { createWhatsAppDirectSink } = require("./whatsapp/directSink");
 const { validateAndPrepareSessionStorage, resolveLocalAuthPaths } = require("./whatsapp/session");
 const { loadLiveWhatsAppGroups, persistAllowedGroups } = require("./whatsapp/groups");
 const { checkDatabaseConnection } = require("./database/client");
@@ -93,6 +96,7 @@ const { DispatchDatabaseRepository } = require("./database/repository");
 const { JobLinkerRepository } = require("./jobLinker/repository");
 const { createJobLinkerService } = require("./jobLinker/service");
 const { createJobLinkerBidService } = require("./jobLinker/bids");
+const { createJobLinkerAutoBidRunner } = require("./jobLinker/autoBid");
 const { registerJobLinkerRoutes } = require("./jobLinker/routes");
 
 const RAILWAY_PUPPETEER_ARGS = [
@@ -429,6 +433,10 @@ function startHttpServer({ logger, runtimeStatus, port, getDashboardContext }) {
       const context = typeof getDashboardContext === "function" ? getDashboardContext() : {};
       return context.jobLinkerBidService;
     },
+    getAutoBidRunner: () => {
+      const context = typeof getDashboardContext === "function" ? getDashboardContext() : {};
+      return context.jobLinkerAutoBidRunner;
+    },
     repository: {
       getCriteria: (...args) => {
         const context = typeof getDashboardContext === "function" ? getDashboardContext() : {};
@@ -444,6 +452,11 @@ function startHttpServer({ logger, runtimeStatus, port, getDashboardContext }) {
         const context = typeof getDashboardContext === "function" ? getDashboardContext() : {};
         if (!context.jobLinkerRepository) throw new Error("Job linker repository is not ready");
         return context.jobLinkerRepository.restoreJobs(...args);
+      },
+      syncSourceJobs: (...args) => {
+        const context = typeof getDashboardContext === "function" ? getDashboardContext() : {};
+        if (!context.jobLinkerRepository) throw new Error("Job linker repository is not ready");
+        return context.jobLinkerRepository.syncSourceJobs(...args);
       }
     },
     authorize: (request, response) => {
@@ -1990,6 +2003,45 @@ async function ensureWorksheetWithHeaders({
   }
 }
 
+async function ensureRideInstructionHeader({ sheetsClient, spreadsheetId, worksheetName, logger }) {
+  const range = buildHeaderRange(worksheetName);
+  let response;
+  try {
+    response = await runStartupSheetsRequest(
+      () => sheetsClient.spreadsheets.values.get({ spreadsheetId, range, majorDimension: "ROWS" }),
+      { logger, action: "read ride headers", worksheetName }
+    );
+  } catch (error) {
+    if (!isGoogleSheetsQuotaError(error)) throw error;
+    logger.warn("Ride instruction header check deferred by Sheets quota", { worksheetName });
+    return null;
+  }
+  const headers = response?.data?.values?.[0] || [];
+  const previous = STRICT_SHEET_HEADERS.slice(0, -1);
+  if (headers.length === STRICT_SHEET_HEADERS.length) return true;
+  if (headers.length !== previous.length ||
+      headers.some((header, index) => normalizeHeaderName(header) !== normalizeHeaderName(previous[index]))) {
+    throw new Error(`Worksheet ${worksheetName} headers need manual review before adding Special Instructions`);
+  }
+  const column = String.fromCharCode(65 + previous.length);
+  try {
+    await runStartupSheetsRequest(
+      () => sheetsClient.spreadsheets.values.update({
+        spreadsheetId,
+        range: `'${worksheetName.replace(/'/g, "''")}'!${column}1`,
+        valueInputOption: "RAW",
+        requestBody: { values: [["Special Instructions"]] }
+      }),
+      { logger, action: "add ride instructions header", worksheetName }
+    );
+  } catch (error) {
+    if (!isGoogleSheetsQuotaError(error)) throw error;
+    logger.warn("Ride instruction header upgrade deferred by Sheets quota", { worksheetName });
+    return null;
+  }
+  return true;
+}
+
 function normalizeSheetTitleForFormula(worksheetName) {
   const cleanName = safeString(worksheetName);
   if (!cleanName) return "";
@@ -2244,9 +2296,11 @@ function registerShutdownHooks({
   getOtsIntegrationPoller,
   getAutoBidPoller,
   getRetentionCleanupPoller,
+  getExpiredRideCleanupPoller,
   getDatabaseRetentionPoller,
   getJobLinkerService,
   getJobLinkerBidService,
+  getJobLinkerAutoBidRunner,
   sessionPath
 }) {
   let shuttingDown = false;
@@ -2403,6 +2457,12 @@ function registerShutdownHooks({
       }
     }
 
+    const expiredRideCleanupPoller =
+      typeof getExpiredRideCleanupPoller === "function" ? getExpiredRideCleanupPoller() : null;
+    if (expiredRideCleanupPoller && typeof expiredRideCleanupPoller.stop === "function") {
+      expiredRideCleanupPoller.stop();
+    }
+
     const databaseRetentionPoller =
       typeof getDatabaseRetentionPoller === "function" ? getDatabaseRetentionPoller() : null;
     if (databaseRetentionPoller && typeof databaseRetentionPoller.stop === "function") {
@@ -2427,6 +2487,11 @@ function registerShutdownHooks({
     const jobLinkerBidService = typeof getJobLinkerBidService === "function" ? getJobLinkerBidService() : null;
     if (jobLinkerBidService && typeof jobLinkerBidService.stop === "function") {
       jobLinkerBidService.stop();
+    }
+
+    const jobLinkerAutoBidRunner = typeof getJobLinkerAutoBidRunner === "function" ? getJobLinkerAutoBidRunner() : null;
+    if (jobLinkerAutoBidRunner && typeof jobLinkerAutoBidRunner.stop === "function") {
+      jobLinkerAutoBidRunner.stop();
     }
 
     logger.info("Service stopped", {
@@ -2471,10 +2536,12 @@ async function bootstrap() {
   let autoBidRunnerRef = null;
   let autoBidPollerRef = null;
   let retentionCleanupPollerRef = null;
+  let expiredRideCleanupPollerRef = null;
   let databaseRetentionPollerRef = null;
   let jobLinkerRepositoryRef = null;
   let jobLinkerServiceRef = null;
   let jobLinkerBidServiceRef = null;
+  let jobLinkerAutoBidRunnerRef = null;
   let databaseHealth = {
     configured: Boolean(env.databaseUrl),
     ok: false,
@@ -2499,9 +2566,11 @@ async function bootstrap() {
     getOtsIntegrationPoller: () => otsIntegrationPollerRef,
     getAutoBidPoller: () => autoBidPollerRef,
     getRetentionCleanupPoller: () => retentionCleanupPollerRef,
+    getExpiredRideCleanupPoller: () => expiredRideCleanupPollerRef,
     getDatabaseRetentionPoller: () => databaseRetentionPollerRef,
     getJobLinkerService: () => jobLinkerServiceRef,
     getJobLinkerBidService: () => jobLinkerBidServiceRef,
+    getJobLinkerAutoBidRunner: () => jobLinkerAutoBidRunnerRef,
     sessionPath: env.whatsappSessionPath
   });
 
@@ -2603,9 +2672,18 @@ async function bootstrap() {
       otsFormattedRowsPath: env.otsFormattedRowsPath,
       otsGroupName: env.otsGroupName,
       otsSourceName: env.otsSourceName,
+      onSyncComplete: () => jobLinkerAutoBidRunnerRef?.tick?.(),
       logger: logger.child({ component: "job-linker" })
     });
+    jobLinkerAutoBidRunnerRef = createJobLinkerAutoBidRunner({
+      repository: jobLinkerRepositoryRef,
+      bidService: jobLinkerBidServiceRef,
+      timeZone: env.appTimeZone,
+      getSourceStatus: () => jobLinkerServiceRef?.state || {},
+      logger: logger.child({ component: "job-linker-auto-bid" })
+    });
     jobLinkerServiceRef.start(env.jobLinkerSyncMs);
+    jobLinkerAutoBidRunnerRef.start();
   }
 
   serverRef = await startHttpServer({
@@ -2629,6 +2707,7 @@ async function bootstrap() {
       jobLinkerRepository: jobLinkerRepositoryRef,
       jobLinkerService: jobLinkerServiceRef,
       jobLinkerBidService: jobLinkerBidServiceRef,
+      jobLinkerAutoBidRunner: jobLinkerAutoBidRunnerRef,
       databasePrimaryEnabled: env.databasePrimaryEnabled && Boolean(databaseRepositoryRef),
       bidAiReviewer,
       dashboardAuthToken: env.dashboardAuthToken,
@@ -2701,29 +2780,9 @@ async function bootstrap() {
     })
   });
 
-  if (!env.whatsappClientId) {
+  if (env.whatsappEnabled && !env.whatsappClientId) {
     throw new Error("WHATSAPP_CLIENT_ID is required for stable LocalAuth persistence");
   }
-
-  const sessionState = validateAndPrepareSessionStorage({
-    sessionPath: env.whatsappSessionPath,
-    clientId: env.whatsappClientId
-  });
-
-  logger.debug("WhatsApp session path resolved", {
-    stage: "whatsapp_auth",
-    reason: sessionState.sessionPath
-  });
-
-  logger.debug(
-    sessionState.sessionFolderHasData
-      ? "Saved session found before startup"
-      : "No saved session found before startup",
-    {
-      stage: "whatsapp_auth",
-      reason: sessionState.sessionFolderPath
-    }
-  );
 
   let activeMessageHandler = null;
   let resolvePipelineReady;
@@ -2742,38 +2801,55 @@ async function bootstrap() {
   };
   let client = null;
 
-  logger.info("Waiting for WhatsApp login before starting downstream workflows", {
-    stage: "whatsapp_auth",
-    reason: "sheets/pollers/message-processing are gated until WhatsApp ready"
-  });
-
-  try {
-    client = await initializeWhatsAppClient({
-      sessionPath: sessionState.sessionPath,
-      clientId: sessionState.clientId,
-      startupTimeoutMs: env.whatsappStartupTimeoutMs,
-      autoClearStaleSession: env.whatsappAutoClearStaleSession,
-      persistedSessionDetected: sessionState.sessionFolderHasData,
-      qrImagePath: runtimeStatus.getSnapshot().qrImagePath,
-      onStateChange: (state, details = {}) => {
-        runtimeStatus.update(state, details);
-      },
-      onClientCreated: (createdClient) => {
-        clientRef = createdClient;
-      },
-      logger: logger.child({ component: "whatsapp-client" }),
-      puppeteer: resolvePuppeteerOptions(),
-      onMessage: gatedOnMessage
+  if (env.whatsappEnabled) {
+    const sessionState = validateAndPrepareSessionStorage({
+      sessionPath: env.whatsappSessionPath,
+      clientId: env.whatsappClientId
     });
-    clientRef = client;
-  } catch (error) {
-    rejectPipelineReady(error);
-    throw error;
-  }
 
-  logger.info("WhatsApp login confirmed; starting downstream workflows", {
-    stage: "whatsapp_connect"
-  });
+    logger.debug("WhatsApp session path resolved", {
+      stage: "whatsapp_auth",
+      reason: sessionState.sessionPath
+    });
+    logger.info("Waiting for WhatsApp login before starting downstream workflows", {
+      stage: "whatsapp_auth",
+      reason: "sheets/pollers/message-processing are gated until WhatsApp ready"
+    });
+
+    try {
+      client = await initializeWhatsAppClient({
+        sessionPath: sessionState.sessionPath,
+        clientId: sessionState.clientId,
+        startupTimeoutMs: env.whatsappStartupTimeoutMs,
+        autoClearStaleSession: env.whatsappAutoClearStaleSession,
+        persistedSessionDetected: sessionState.sessionFolderHasData,
+        qrImagePath: runtimeStatus.getSnapshot().qrImagePath,
+        onStateChange: (state, details = {}) => {
+          runtimeStatus.update(state, details);
+        },
+        onClientCreated: (createdClient) => {
+          clientRef = createdClient;
+        },
+        logger: logger.child({ component: "whatsapp-client" }),
+        puppeteer: resolvePuppeteerOptions(),
+        onMessage: gatedOnMessage
+      });
+      clientRef = client;
+    } catch (error) {
+      rejectPipelineReady(error);
+      throw error;
+    }
+
+    logger.info("WhatsApp login confirmed; starting downstream workflows", {
+      stage: "whatsapp_connect"
+    });
+  } else {
+    runtimeStatus.update("disabled", { qrAvailable: false, error: "" });
+    logger.info("WhatsApp collector disabled in this process", {
+      stage: "whatsapp_connect",
+      reason: "dedicated ride-bot owns the single WhatsApp session"
+    });
+  }
 
   if (env.googleCredentialsJsonError) {
     const startupError = new Error(
@@ -3046,21 +3122,39 @@ async function bootstrap() {
     logger: logger.child({ component: "sheets-startup" })
   });
 
+  const rideHeaderStatus = new Map();
+  for (const worksheetName of [
+    env.googleRidesWorksheetName,
+    env.googleNeedsReviewWorksheetName,
+    env.googleUpcomingJobsWorksheetName
+  ]) {
+    const upgraded = await ensureRideInstructionHeader({
+      sheetsClient,
+      spreadsheetId: env.googleSheetsId,
+      worksheetName,
+      logger: logger.child({ component: "sheets-startup" })
+    });
+    rideHeaderStatus.set(worksheetName, upgraded);
+  }
+
   await verifyWorksheetTargetsReady({
     sheetsClient,
     spreadsheetId: env.googleSheetsId,
     worksheetTargets: [
       {
         worksheetName: env.googleRidesWorksheetName,
-        expectedHeaders: STRICT_SHEET_HEADERS
+        expectedHeaders: rideHeaderStatus.get(env.googleRidesWorksheetName) ? STRICT_SHEET_HEADERS : [],
+        minimumHeaders: STRICT_SHEET_HEADERS.slice(0, -1)
       },
       {
         worksheetName: env.googleNeedsReviewWorksheetName,
-        expectedHeaders: STRICT_SHEET_HEADERS
+        expectedHeaders: rideHeaderStatus.get(env.googleNeedsReviewWorksheetName) ? STRICT_SHEET_HEADERS : [],
+        minimumHeaders: STRICT_SHEET_HEADERS.slice(0, -1)
       },
       {
         worksheetName: env.googleUpcomingJobsWorksheetName,
-        expectedHeaders: STRICT_SHEET_HEADERS
+        expectedHeaders: rideHeaderStatus.get(env.googleUpcomingJobsWorksheetName) ? STRICT_SHEET_HEADERS : [],
+        minimumHeaders: STRICT_SHEET_HEADERS.slice(0, -1)
       },
       {
         worksheetName: env.googleFinalBidWorksheetName,
@@ -3214,12 +3308,12 @@ async function bootstrap() {
     reason: `interval=${env.operationsViewRefreshMs}ms sheet=${env.googleOperationsViewWorksheetName}`
   });
 
-  async function runSheetsBackup(label, fn, meta = {}) {
-    if (!env.databasePrimaryEnabled || env.databaseSheetsBackupEnabled) {
+  async function runSheetsBackup(label, fn, meta = {}, primaryWriteSucceeded = env.databasePrimaryEnabled) {
+    if (!primaryWriteSucceeded || env.databaseSheetsBackupEnabled) {
       try {
         return await fn();
       } catch (error) {
-        if (!env.databasePrimaryEnabled) throw error;
+        if (!primaryWriteSucceeded) throw error;
         logger.warn(`${label} backup failed`, {
           stage: "database_backup",
           fallbackUsed: true,
@@ -3241,23 +3335,61 @@ async function bootstrap() {
     logger: logger.child({ component: "sheets-append-rides" })
   });
 
-  const appendRideRow = async (ride) => {
-    if (env.databasePrimaryEnabled && databaseRepositoryRef) {
-      await databaseRepositoryRef.upsertRide(ride, {
-        status: "New",
-        retentionClass: "operational"
-      });
-      logger.info("Ride saved to database", {
-        stage: "database",
+  const whatsappDirectSink = env.whatsappDirectIngestUrl
+    ? createWhatsAppDirectSink({
+        endpoint: env.whatsappDirectIngestUrl,
+        token: env.whatsappDirectIngestToken,
+        queuePath: env.whatsappDirectQueuePath,
+        retryMs: env.whatsappDirectRetryMs,
+        logger: logger.child({ component: "whatsapp-direct-ingest" })
+      })
+    : null;
+  whatsappDirectSink?.start();
+
+  const appendRideRow = async (ride, options = {}) => {
+    const isWhatsApp = options.sourceType === "WhatsApp";
+    const isDirectWhatsApp = isWhatsApp &&
+      env.whatsappDirectDatabaseEnabled && Boolean(jobLinkerRepositoryRef);
+    let primaryWriteSucceeded = false;
+    try {
+      if (isWhatsApp && whatsappDirectSink) {
+        await whatsappDirectSink.submit(ride);
+        primaryWriteSucceeded = true;
+      } else if (isDirectWhatsApp) {
+        const result = await jobLinkerRepositoryRef.syncSourceJobs([ride], "WhatsApp");
+        primaryWriteSucceeded = true;
+        logger.info(result.count > 0 ? "Eligible WhatsApp ride saved directly" : "WhatsApp ride filtered from Groups", {
+          stage: "whatsapp_direct_database",
+          refer: ride?.refer || ride?.Refer,
+          fallbackUsed: false,
+          reason: result.count > 0 ? "eligible=1" : "eligible=0"
+        });
+      } else if (env.databasePrimaryEnabled && databaseRepositoryRef) {
+        await databaseRepositoryRef.upsertRide(ride, {
+          status: "New",
+          retentionClass: "operational"
+        });
+        primaryWriteSucceeded = true;
+        logger.info("Ride saved to database", {
+          stage: "database",
+          refer: ride?.refer || ride?.Refer,
+          fallbackUsed: false
+        });
+      }
+    } catch (error) {
+      logger.warn("Direct ride database write failed; preserving sheet fallback", {
+        stage: "whatsapp_direct_database",
         refer: ride?.refer || ride?.Refer,
-        fallbackUsed: false
+        fallbackUsed: true,
+        reason: error?.message || "database_write_failed"
       });
     }
 
     return runSheetsBackup(
       "Rides sheet",
       () => appendRideRowToSheets(ride),
-      { refer: ride?.refer || ride?.Refer }
+      { refer: ride?.refer || ride?.Refer },
+      primaryWriteSucceeded
     );
   };
   appendRideRowRef = appendRideRow;
@@ -3455,6 +3587,31 @@ async function bootstrap() {
   };
   appendFinalBidAndBidTrackerIfEligibleRef = appendFinalBidAndBidTrackerIfEligible;
 
+  const recordRawMessage = async (record) => {
+    if (!env.whatsappDirectDatabaseEnabled || !databaseRepositoryRef) return;
+    try {
+      await databaseRepositoryRef.saveRawMessage(record);
+    } catch (error) {
+      logger.warn("Raw WhatsApp message audit write failed", {
+        stage: "whatsapp_raw_message",
+        fallbackUsed: true,
+        reason: error?.message || "raw_message_write_failed"
+      });
+    }
+  };
+  const markRawMessageParsed = async (record) => {
+    if (!env.whatsappDirectDatabaseEnabled || !databaseRepositoryRef) return;
+    try {
+      await databaseRepositoryRef.markRawMessageParsed(record);
+    } catch (error) {
+      logger.warn("Raw WhatsApp message status update failed", {
+        stage: "whatsapp_raw_message",
+        fallbackUsed: true,
+        reason: error?.message || "raw_message_status_failed"
+      });
+    }
+  };
+
   activeMessageHandler = createMessageHandler({
     env,
     logger: logger.child({ component: "message-handler" }),
@@ -3464,12 +3621,36 @@ async function bootstrap() {
     ocrExtractor,
     geocoder,
     osrmClient,
-    appendRideRow,
+    appendRideRow: (ride) => appendRideRow(ride, { sourceType: "WhatsApp" }),
     appendReviewRow,
     appendUpcomingJobIfEligible,
-    appendFinalBidIfEligible: appendFinalBidAndBidTrackerIfEligible
+    appendFinalBidIfEligible: appendFinalBidAndBidTrackerIfEligible,
+    recordRawMessage,
+    markRawMessageParsed
   });
   resolvePipelineReady();
+
+  if (env.whatsappBackfillEnabled && clientRef) {
+    const backfillRunner = createWhatsAppBackfillRunner({
+      client: clientRef,
+      onMessage: activeMessageHandler,
+      allowedGroups: env.allowedGroups,
+      allowedGroupIds: env.allowedGroupIds,
+      allowedGroupNames: env.allowedGroupNames,
+      lookbackHours: env.whatsappBackfillHours,
+      perGroupLimit: env.whatsappBackfillPerGroup,
+      logger: logger.child({ component: "whatsapp-backfill" })
+    });
+    const runBackfill = () => backfillRunner.run().catch((error) => {
+      logger.warn("WhatsApp reconnect backfill failed", {
+        stage: "whatsapp_backfill",
+        fallbackUsed: true,
+        reason: error?.message || "backfill_failed"
+      });
+    });
+    clientRef.on("ready", runBackfill);
+    setImmediate(runBackfill);
+  }
 
   const otsImportOptions = {
     projectPath: env.otsProjectPath,
@@ -3555,6 +3736,15 @@ async function bootstrap() {
     });
   }
 
+  if (env.expiredRideCleanupEnabled) {
+    expiredRideCleanupPollerRef = startExpiredRideCleanupPolling({
+      sheetsClient,
+      spreadsheetId: env.googleSheetsId,
+      intervalMs: env.expiredRideCleanupPollMs,
+      logger: logger.child({ component: "expired-ride-cleanup" })
+    });
+  }
+
   if (env.databaseRetentionEnabled && databaseHealth.ok) {
     databaseRetentionPollerRef = startDatabaseRetentionPolling({
       databaseUrl: env.databaseUrl,
@@ -3582,7 +3772,7 @@ async function bootstrap() {
   const bootSummary = {
     allowedGroups: env.allowedGroups,
     whatsappClientId: env.whatsappClientId,
-    sessionDir: sessionState.sessionPath,
+    sessionDir: env.whatsappEnabled ? env.whatsappSessionPath : "disabled",
     worksheetName: env.googleRidesWorksheetName,
     needsReviewWorksheetName: env.googleNeedsReviewWorksheetName,
     upcomingJobsWorksheetName: env.googleUpcomingJobsWorksheetName,
@@ -3698,6 +3888,7 @@ module.exports = {
   bootstrap,
   verifyWorksheetTargetsReady,
   ensureWorksheetWithHeaders,
+  ensureRideInstructionHeader,
   applyFinalBidAssignedDriverValidation,
   applyTextFormatForHeaders
 };

@@ -43,6 +43,14 @@ New York
 
 \u00A3145`;
 
+test("date output uses the actual ride date in short UK format", () => {
+  const extractor = createLocalExtractor({ logger: createSilentLogger() });
+  const ride = extractor.extract("Tue 13th Oct 26, 1:00 pm\nFrom: LHR\nTo: STN", {
+    received_at: "2026-10-13T09:00:00Z"
+  });
+  assert.equal(ride.pickup_day_date, "Tue 13th Oct 26");
+});
+
 async function extractRidesFromMessage(message, messageId = "MULTI-FORMAT") {
   const logger = createSilentLogger();
   const extractor = createLocalExtractor({ logger });
@@ -73,7 +81,7 @@ const SHORT_CARD_CASES = [
     message: SHORT_CARD_FIXTURE,
     expected: {
       required_vehicle: "Estate",
-      pickup_day_date: "Thursday 12th March 2026",
+      pickup_day_date: "Thu 12th Mar 26",
       starting_timing: "10:25 pm",
       pickup: "STN",
       drop_off: "NW11",
@@ -89,7 +97,7 @@ LHR TO SW1
 FARE \u00A345 CASH`,
     expected: {
       required_vehicle: "Saloon",
-      pickup_day_date: "Wednesday 11th March 2026",
+      pickup_day_date: "Wed 11th Mar 26",
       starting_timing: "9:15 am",
       pickup: "LHR",
       drop_off: "SW1",
@@ -105,7 +113,7 @@ W2 TO UB3
 ACCOUNT JOB`,
     expected: {
       required_vehicle: "MPV",
-      pickup_day_date: "Wednesday 11th March 2026",
+      pickup_day_date: "Wed 11th Mar 26",
       starting_timing: "11:40 pm",
       pickup: "W2",
       drop_off: "UB3",
@@ -119,7 +127,7 @@ TOMORROW 18:00
 LTN -> SE10`,
     expected: {
       required_vehicle: "Executive",
-      pickup_day_date: "Thursday 12th March 2026",
+      pickup_day_date: "Thu 12th Mar 26",
       starting_timing: "6:00 pm",
       pickup: "LTN",
       drop_off: "SE10"
@@ -132,7 +140,7 @@ Tomorrow 22:25
 Stn to Nw11`,
     expected: {
       required_vehicle: "Estate",
-      pickup_day_date: "Thursday 12th March 2026",
+      pickup_day_date: "Thu 12th Mar 26",
       starting_timing: "10:25 pm",
       pickup: "Stn",
       drop_off: "Nw11"
@@ -144,7 +152,7 @@ Stn to Nw11`,
 NOW 14:05
 EC1 TO N3`,
     expected: {
-      pickup_day_date: "Wednesday 11th March 2026",
+      pickup_day_date: "Wed 11th Mar 26",
       starting_timing: "2:05 pm",
       pickup: "EC1",
       drop_off: "N3"
@@ -160,7 +168,7 @@ Heathrow Airport, Terminal 3
 75
 Today @16:30`,
     expected: {
-      pickup_day_date: "Wednesday 11th March 2026",
+      pickup_day_date: "Wed 11th Mar 26",
       starting_timing: "4:30 pm",
       pickup: "22, Clifton Park Road, Caversham",
       drop_off: "Heathrow Airport, Terminal 3",
@@ -330,7 +338,7 @@ test("local extractor fills strict deterministic fields and keeps blanks", () =>
   assert.equal(extracted.group_name, "Dispatch Group");
   assert.equal(extracted.source_name, "447700900123");
   assert.equal(extracted.required_vehicle, "Saloon Car");
-  assert.equal(extracted.pickup_day_date, "Tuesday 7th October 2025");
+  assert.equal(extracted.pickup_day_date, "Tue 7th Oct 25");
   assert.equal(extracted.starting_timing, "8:05 pm");
   assert.equal(extracted.pickup, "Heathrow Airport, Terminal 4");
   assert.equal(
@@ -595,7 +603,7 @@ test("local extractor captures standalone fare line and known vehicle from ACE r
     received_at: "2026-03-11T10:15:00.000Z"
   });
 
-  assert.equal(extracted.pickup_day_date, "Friday 13th March 2026");
+  assert.equal(extracted.pickup_day_date, "Fri 13th Mar 26");
   assert.equal(extracted.starting_timing, "6:25 am");
   assert.equal(extracted.pickup, "Heathrow Airport, Terminal 5");
   assert.equal(extracted.drop_off, "10 Oakland Villas, Hay-on-Wye, Hereford, HR3 5PH");

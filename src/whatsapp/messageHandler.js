@@ -1,3 +1,4 @@
+const crypto = require("node:crypto");
 const { normalizeText, safeTrim } = require("../utils/text");
 const { summarizeKnownError } = require("../utils/logger");
 const { generateRefer } = require("../utils/reference");
@@ -8,9 +9,11 @@ const {
 } = require("../extraction/schemas");
 const { buildSheetRow } = require("../sheets/appendRow");
 const { calculateDeterministicFare, metersToKm } = require("../routing/fare");
+const { cleanupRide } = require("../extraction/rideCleanup");
 
 const SYSTEM_MESSAGE_TYPES = new Set(["e2e_notification", "notification_template", "protocol"]);
 const MERGE_PROTECTED_FIELDS = new Set(["distance", "fare"]);
+const CONTENT_DEDUPE_TTL_MS = 10 * 60 * 1000;
 
 function resolveMessageId(message) {
   return safeTrim(message?.id?._serialized || message?.id?.id || message?.id || "");
@@ -660,6 +663,7 @@ async function processRideAttempt({
   env,
   logger,
   dedupe,
+  contentInFlight,
   localExtractor,
   openaiNormalizer,
   geocoder,
@@ -668,13 +672,20 @@ async function processRideAttempt({
   appendReviewRow,
   appendUpcomingJobIfEligible,
   appendFinalBidIfEligible,
+  recordRawMessage,
+  markRawMessageParsed,
   groupName,
   sourceName,
   receivedAt,
   chatId
 }) {
   const attemptDedupeKey = createAttemptDedupeKey(dedupe, attempt, message, chatId, receivedAt);
-  if (dedupe.hasProcessed(attemptDedupeKey)) {
+  const contentDedupeKey = `content:${crypto.createHash("sha256")
+    .update(`${chatId}|${normalizeText(attempt.rawText).toLowerCase()}`)
+    .digest("hex")}`;
+  if (dedupe.hasProcessed(attemptDedupeKey) ||
+      dedupe.hasProcessed(contentDedupeKey, CONTENT_DEDUPE_TTL_MS) ||
+      contentInFlight.has(contentDedupeKey)) {
     logger.debug("Attempt skipped as duplicate", {
       stage: "dedupe",
       messageId: attempt.attemptMessageId,
@@ -683,6 +694,9 @@ async function processRideAttempt({
     return { skipped: true, reason: "duplicate" };
   }
 
+  contentInFlight.add(contentDedupeKey);
+  try {
+
   logger.debug("Processing ride attempt", {
     stage: "ingest",
     messageId: attempt.attemptMessageId,
@@ -690,6 +704,16 @@ async function processRideAttempt({
     sourceName,
     reason: attempt.sourceKind
   });
+
+  if (typeof recordRawMessage === "function") {
+    await recordRawMessage({
+      messageId: attempt.attemptMessageId,
+      chatId,
+      groupName,
+      sourceTime: receivedAt,
+      payload: attempt.rawText
+    });
+  }
 
   const extractionContext = {
     source_name: sourceName,
@@ -721,7 +745,10 @@ async function processRideAttempt({
   ride.source_name = safeTrim(ride.source_name) || sourceName;
   ride.source_time =
     safeTrim(ride.source_time) || formatSourceTime(receivedAt, env?.appTimeZone);
-  ride = createEmptyRideObject(ride);
+  const rawPickup = ride.pickup;
+  const rawDropOff = ride.drop_off;
+  const cleanup = cleanupRide(ride, attempt.rawText);
+  ride = createEmptyRideObject(cleanup.ride);
 
   if (!safeTrim(ride.refer)) {
     ride.refer = generateRefer({
@@ -732,12 +759,18 @@ async function processRideAttempt({
     });
   }
 
-  const pickupGeocode = await safeGeocode(geocoder, ride.pickup, logger, "pickup");
-  const dropOffGeocode = await safeGeocode(geocoder, ride.drop_off, logger, "drop_off");
+  const pickupAddress = /-{3,}/.test(rawPickup) || ride.pickup === "SEN" ? ride.pickup : rawPickup;
+  const dropOffAddress = /-{3,}|\b(?:booster|child|baby|infant)\s*seats?\b/i.test(rawDropOff) || ride.drop_off === "SEN"
+    ? ride.drop_off
+    : rawDropOff;
+  const pickupGeocode = await safeGeocode(geocoder, ride.pickup ? pickupAddress : "", logger, "pickup");
+  const dropOffGeocode = await safeGeocode(geocoder, ride.drop_off ? dropOffAddress : "", logger, "drop_off");
   const route = await safeRoute(osrmClient, pickupGeocode, dropOffGeocode, logger);
 
   let distanceKm = null;
-  if (route && Number.isFinite(route.distance_meters)) {
+  const routeMiles = Number(route?.distance_meters) / 1609.344;
+  const routeImplausible = route && (!Number.isFinite(routeMiles) || routeMiles > 1000 || routeMiles < 0);
+  if (route && !routeImplausible && Number.isFinite(route.distance_meters)) {
     distanceKm = metersToKm(route.distance_meters);
     ride.distance = formatDistanceMiles(route.distance_meters);
   } else {
@@ -753,6 +786,17 @@ async function processRideAttempt({
     pickupGeocode,
     dropOffGeocode
   });
+  routingDecision.reasons.push(...cleanup.issues);
+  if (routeImplausible) routingDecision.reasons.push("route_distance_implausible");
+  const fareNumber = Number(String(ride.fare).replace(/[^\d.]/g, ""));
+  if (fareNumber > 10000 ||
+      (Number.isFinite(routeMiles) && route && !routeImplausible &&
+        fareNumber > Math.max(1500, routeMiles * 30 + 250))) {
+    ride.fare = "";
+    routingDecision.reasons.push("fare_implausible");
+  }
+  routingDecision.reasons = [...new Set(routingDecision.reasons)];
+  routingDecision.target = routingDecision.reasons.length ? "review" : "rides";
 
   if (typeof appendRow !== "function") {
     throw new Error("No sheet append function configured");
@@ -823,6 +867,18 @@ async function processRideAttempt({
     target: routingDecision.target,
     processedAt: new Date().toISOString()
   });
+  dedupe.markProcessed(contentDedupeKey, { messageId: attempt.attemptMessageId, chatId });
+
+  if (typeof markRawMessageParsed === "function") {
+    await markRawMessageParsed({
+      messageId: attempt.attemptMessageId,
+      rideId: ride.refer,
+      parsed: true,
+      reason: routingDecision.target === "rides"
+        ? "ride_processed"
+        : `needs_review:${routingDecision.reasons.join(",")}`
+    });
+  }
 
   logger.info("Ride processed", {
     stage: "completed",
@@ -840,6 +896,9 @@ async function processRideAttempt({
     ride,
     target: routingDecision.target
   };
+  } finally {
+    contentInFlight.delete(contentDedupeKey);
+  }
 }
 
 function createMessageHandler({
@@ -855,6 +914,8 @@ function createMessageHandler({
   appendReviewRow,
   appendUpcomingJobIfEligible,
   appendFinalBidIfEligible,
+  recordRawMessage,
+  markRawMessageParsed,
   appendRow
 }) {
   const allowedGroupMatcher = createAllowedGroupMatcher({
@@ -864,6 +925,7 @@ function createMessageHandler({
   });
   const allowFromMeMessages = Boolean(env?.allowFromMeMessages);
   const ingestDebug = Boolean(env?.ingestDebug);
+  const contentInFlight = new Set();
   let warnedAboutEmptyAllowList = false;
 
   return async function handleMessage(message) {
@@ -980,6 +1042,7 @@ function createMessageHandler({
             env,
             logger,
             dedupe,
+            contentInFlight,
             localExtractor,
             openaiNormalizer,
             geocoder,
@@ -988,6 +1051,8 @@ function createMessageHandler({
             appendReviewRow,
             appendUpcomingJobIfEligible,
             appendFinalBidIfEligible,
+            recordRawMessage,
+            markRawMessageParsed,
             groupName,
             sourceName,
             receivedAt,
@@ -1031,6 +1096,7 @@ function createMessageHandler({
 
 module.exports = {
   createMessageHandler,
+  createAllowedGroupMatcher,
   buildMessageAttempts,
   hasUsefulRawText
 };

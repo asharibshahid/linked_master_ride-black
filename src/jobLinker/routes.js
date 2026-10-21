@@ -1,6 +1,7 @@
 function registerJobLinkerRoutes(app, options = {}) {
   const getService = options.getService;
   const getBidService = options.getBidService;
+  const getAutoBidRunner = options.getAutoBidRunner;
   const authorize = options.authorize;
   const logger = options.logger || { warn: () => {} };
 
@@ -19,6 +20,13 @@ function registerJobLinkerRoutes(app, options = {}) {
     const service = typeof getBidService === "function" ? getBidService() : null;
     if (service) return service;
     response.status(503).json({ ok: false, code: "BID_SERVICE_UNAVAILABLE", message: "Job Linker bid service is not ready." });
+    return null;
+  }
+
+  function autoBidRunnerOrFail(response) {
+    const runner = typeof getAutoBidRunner === "function" ? getAutoBidRunner() : null;
+    if (runner) return runner;
+    response.status(503).json({ ok: false, code: "AUTO_BID_UNAVAILABLE", message: "Auto Bid service is not ready." });
     return null;
   }
 
@@ -50,7 +58,10 @@ function registerJobLinkerRoutes(app, options = {}) {
     if (!service) return;
     try {
       response.setHeader("Cache-Control", "no-store");
-      response.json(await service.snapshot());
+      const snapshot = await service.snapshot();
+      const autoBidRunner = typeof getAutoBidRunner === "function" ? getAutoBidRunner() : null;
+      if (autoBidRunner) snapshot.autoBid = await autoBidRunner.snapshot();
+      response.json(snapshot);
     } catch (error) {
       logger.warn("Job Linker workspace load failed", {
         stage: "job_linker_api",
@@ -95,6 +106,67 @@ function registerJobLinkerRoutes(app, options = {}) {
       response.status(result.ok ? 200 : 500).json(result);
     } catch (error) {
       sendOperationError(response, error, "Job source synchronization failed. Check backend logs.");
+    }
+  });
+
+  app.post("/api/job-linker/links/:linkId/archive", async (request, response) => {
+    if (!secure(request, response)) return;
+    const service = serviceOrFail(response);
+    if (!service) return;
+    try {
+      const result = await service.archiveLink(request.params.linkId);
+      if (!result.ok) return response.status(404).json({ ok: false, message: "This link is no longer available." });
+      response.json({ ok: true, message: "Link archived." });
+    } catch (error) {
+      sendOperationError(response, error, "Link could not be archived.");
+    }
+  });
+
+  app.post("/api/job-linker/links/:linkId/unarchive", async (request, response) => {
+    if (!secure(request, response)) return;
+    const service = serviceOrFail(response);
+    if (!service) return;
+    try {
+      const result = await service.unarchiveLink(request.params.linkId);
+      if (!result.ok) return response.status(404).json({ ok: false, message: "This archived link is no longer available." });
+      response.json({ ok: true, message: "Link restored." });
+    } catch (error) {
+      sendOperationError(response, error, "Link could not be restored.");
+    }
+  });
+
+  app.post("/api/job-linker/auto-bid/settings", async (request, response) => {
+    if (!secure(request, response)) return;
+    const runner = autoBidRunnerOrFail(response);
+    if (!runner) return;
+    try {
+      const enabling = request.body?.enabled === true || String(request.body?.enabled).toLowerCase() === "true";
+      if (enabling && request.body?.confirmation !== "ENABLE AUTO BID") {
+        response.status(400).json({ ok: false, code: "AUTO_BID_CONFIRMATION_REQUIRED", message: "Confirm Auto Bid before enabling it." });
+        return;
+      }
+      response.json({ ok: true, autoBid: await runner.saveSettings(request.body || {}) });
+    } catch (error) {
+      sendOperationError(response, error, "Auto Bid settings could not be saved.");
+    }
+  });
+
+  app.post("/api/job-linker/whatsapp-ingest", async (request, response) => {
+    if (!secure(request, response)) return;
+    try {
+      const ride = request.body?.ride;
+      if (!ride || typeof ride !== "object") {
+        response.status(400).json({ ok: false, code: "RIDE_REQUIRED", message: "A normalized WhatsApp ride is required." });
+        return;
+      }
+      const result = await options.repository.syncSourceJobs([ride], "WhatsApp");
+      response.status(202).json({
+        ok: true,
+        accepted: result.count === 1,
+        filtered: result.count === 0
+      });
+    } catch (error) {
+      sendOperationError(response, error, "WhatsApp ride could not be ingested.");
     }
   });
 

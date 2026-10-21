@@ -57,15 +57,25 @@ test("parsePickupDateTime parses UK-normalized dates and times deterministically
   const shortMonth = parsePickupDateTime("Tuesday 11th Aug 2026", "10:00", {
     timeZone: "Europe/London"
   });
+  const shortDisplay = parsePickupDateTime("Tue 13th Oct 26", "1:00 pm", {
+    timeZone: "Europe/London"
+  });
+  const nextDayDuration = parsePickupDateTime("30/09/2026", "28:10:00", {
+    timeZone: "Europe/London",
+    numericDateOrder: "dmy"
+  });
 
   assert.ok(morning instanceof Date);
   assert.ok(legacy instanceof Date);
   assert.ok(iso instanceof Date);
   assert.ok(shortMonth instanceof Date);
+  assert.ok(shortDisplay instanceof Date);
   assert.equal(formatInUk(morning), "13/03/2026, 06:25");
   assert.equal(formatInUk(legacy), "07/10/2025, 20:05");
   assert.equal(formatInUk(iso), "01/05/2026, 16:30");
   assert.equal(formatInUk(shortMonth), "11/08/2026, 10:00");
+  assert.equal(formatInUk(shortDisplay), "13/10/2026, 13:00");
+  assert.equal(formatInUk(nextDayDuration), "01/10/2026, 04:10");
   assert.equal(parsePickupDateTime("Tomorrow", "12:00 pm"), null);
   assert.equal(parsePickupDateTime("Friday 13th March 2026", ""), null);
 });

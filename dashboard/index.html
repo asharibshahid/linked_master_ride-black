@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0f0f0d">
-  <title>ACE Job Linker</title>
+  <title>ACE OTS Supplier</title>
+  <script>try{document.documentElement.dataset.theme=localStorage.getItem("aceDashboardTheme")==="light"?"light":"dark"}catch(error){document.documentElement.dataset.theme="dark"}</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&amp;family=IBM+Plex+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
@@ -14,9 +15,9 @@
 <body>
   <div class="app-shell">
     <aside class="sidebar">
-      <a class="brand" href="#master" aria-label="ACE Job Linker">
+      <a class="brand" href="#master" aria-label="ACE OTS Supplier">
         <span class="brand-mark">A</span>
-        <span><strong>ACE</strong><small>Job Linker</small></span>
+        <span><strong>ACE</strong><small>OTS Supplier</small></span>
       </a>
       <div class="connection" id="live-status"><span class="status-dot"></span><span>Connecting</span></div>
       <nav class="nav" aria-label="Primary navigation">
@@ -33,7 +34,7 @@
     <main class="workspace">
       <header class="workspace-head">
         <div><p class="eyebrow" id="eyebrow">OTS LIVE JOBS</p><h1 id="page-title">Master</h1><p id="page-description">Eligible OTS jobs ready for review.</p></div>
-        <div class="head-actions"><span class="account-state" title="The backend currently supports one OTS worker session">OTS single session</span><button class="button" id="refresh-button" type="button">Refresh</button></div>
+        <div class="head-actions"><span class="account-state" title="The backend currently supports one OTS worker session">OTS single session</span><button class="theme-toggle" id="theme-toggle" type="button" aria-label="Use light theme" title="Use light theme"><span id="theme-icon" aria-hidden="true">&#9728;</span></button><button class="button" id="refresh-button" type="button">Refresh</button></div>
       </header>
       <div class="notice hidden" id="notice" role="status" aria-live="polite"></div>
 
@@ -47,11 +48,13 @@
           </div>
           <div class="filter-row">
             <label><span>From</span><input id="master-date-from" type="date"></label><label><span>To</span><input id="master-date-to" type="date"></label>
-            <div class="quick-dates" aria-label="Quick date filters"><button type="button" data-date-preset="today">Today</button><button type="button" data-date-preset="tomorrow">Tomorrow</button><button type="button" data-date-preset="week">This week</button><button type="button" data-date-preset="month">This month</button><button type="button" data-date-preset="nextMonth">Next month</button></div>
+            <div class="quick-dates" aria-label="Quick date filters"><button type="button" data-date-scope="master" data-date-preset="today">Today</button><button type="button" data-date-scope="master" data-date-preset="tomorrow">Tomorrow</button><button type="button" data-date-scope="master" data-date-preset="week">This week</button><button type="button" data-date-scope="master" data-date-preset="month">This month</button><button type="button" data-date-scope="master" data-date-preset="nextMonth">Next month</button></div>
           </div>
           <div class="filter-row">
-            <label><span>Mileage</span><select id="master-mileage"><option value="all">All mileage</option><option value="0-9">0-9 mi</option><option value="10-49">10-49 mi</option><option value="50-99">50-99 mi</option><option value="100-199">100-199 mi</option><option value="200+">200+ mi</option></select></label>
+            <div class="chips" aria-label="Master mileage quick filters"><button class="chip active" data-mileage-scope="master" data-mileage-value="all" type="button">All mileage</button><button class="chip" data-mileage-scope="master" data-mileage-value="49+" type="button">49+</button><button class="chip" data-mileage-scope="master" data-mileage-value="99+" type="button">99+</button></div>
+            <label><span>Mileage</span><select id="master-mileage"><option value="all">All mileage</option><option value="49+">49+ mi</option><option value="99+">99+ mi</option><option value="0-9">0-9 mi</option><option value="10-49">10-49 mi</option><option value="50-99">50-99 mi</option><option value="100-199">100-199 mi</option><option value="200+">200+ mi</option></select></label>
             <label><span>Vehicle</span><select id="master-vehicle"><option value="all">All vehicles</option><option value="saloon">Saloon</option><option value="estate">Estate</option><option value="other">People carrier / MPV</option></select></label>
+            <label><span>London area</span><select id="master-location"><option value="all">All areas</option><option value="inside">Inside London</option><option value="outside">Outside London</option></select></label>
             <label><span>Fare</span><select id="master-fare"><option value="all">All fares</option><option value="0-49">Under &pound;50</option><option value="50-99">&pound;50-&pound;99</option><option value="100-149">&pound;100-&pound;149</option><option value="150-199">&pound;150-&pound;199</option><option value="200+">&pound;200+</option></select></label>
             <label><span>Sort</span><select id="master-sort"><option value="pickupAsc">Pickup date up</option><option value="pickupDesc">Pickup date down</option><option value="newest">Latest added</option><option value="fareDesc">Fare high to low</option></select></label>
             <button class="button ghost" id="master-clear-filters" type="button">Clear filters</button>
@@ -63,32 +66,56 @@
 
       <section class="view" data-view="bid">
         <div class="stats" id="bid-summary"></div>
-        <div class="source-banner"><div><strong>Persisted OTS bids</strong><span>Submitted means the provider attempt completed. Only an exact PreBook reference confirms a booking.</span></div><span class="status-pill warn">Manual only</span></div>
-        <div class="bid-grid" id="bid-list"></div>
+        <div class="source-banner"><div><strong>Persisted OTS bids</strong><span>Manual and Auto Bid attempts use the same confirmed OTS workflow. Only an exact PreBook reference confirms a booking.</span></div><span class="status-pill warn">Controlled bids</span></div>
+        <div class="list-toolbar bid-toolbar">
+          <label class="search-control"><span>Search bids</span><input id="bid-search" type="search" placeholder="Reference, route, status or bid type"></label>
+          <label><span>London area</span><select id="bid-location"><option value="all">All areas</option><option value="inside">Inside London</option><option value="outside">Outside London</option></select></label>
+          <button class="button ghost" id="bid-clear-filters" type="button">Clear filters</button>
+          <div class="report-range" aria-label="Report date range"><div class="chips"><button class="chip active" data-report-preset="2" type="button">Last 2 days</button><button class="chip" data-report-preset="4" type="button">Last 4 days</button><button class="chip" data-report-preset="7" type="button">Last 7 days</button><button class="chip" data-report-preset="month" type="button">This month</button><button class="chip" data-report-preset="custom" type="button">Custom</button></div><div class="report-controls"><label><span>From</span><input id="report-from" type="date"></label><label><span>To</span><input id="report-to" type="date"></label><button class="button primary" id="download-report" type="button">Download PDF</button></div></div>
+        </div>
+        <div class="bid-table-head" aria-hidden="true"><span>Reference</span><span>Date &amp; time</span><span>Pickup</span><span>Drop-off</span><span>Miles / bid</span><span>Status</span></div>
+        <div class="bid-list" id="bid-list"></div>
         <div class="pager" id="bid-pager"></div>
       </section>
 
       <section class="view" data-view="prebook">
         <div class="source-banner" id="prebook-banner"></div>
-        <div class="list-toolbar"><label class="search-control"><span>Search</span><input id="prebook-search" type="search" placeholder="Reference, pickup or drop-off"></label><label><span>Vehicle</span><select id="prebook-vehicle"><option value="all">All vehicles</option><option value="saloon">Saloon</option><option value="estate">Estate</option><option value="other">People carrier / MPV</option></select></label></div>
+        <div class="list-toolbar"><label class="search-control"><span>Search</span><input id="prebook-search" type="search" placeholder="Reference, pickup or drop-off"></label><label><span>Vehicle</span><select id="prebook-vehicle"><option value="all">All vehicles</option><option value="saloon">Saloon</option><option value="estate">Estate</option><option value="other">People carrier / MPV</option></select></label><label><span>London area</span><select id="prebook-location"><option value="all">All areas</option><option value="inside">Inside London</option><option value="outside">Outside London</option></select></label><button class="button ghost" id="prebook-clear-filters" type="button">Clear filters</button></div>
         <div class="bulk-actions hidden" id="prebook-bulk"><span id="prebook-selected-count">0 selected</span><button class="button danger" data-trash-selected="prebook" type="button">Move to Trash</button></div>
         <div class="mobile-categories" data-mobile-tabs="prebook"></div><div class="job-columns" id="prebook-columns"></div><div class="pager" id="prebook-pager"></div>
       </section>
 
       <section class="view" data-view="groups">
         <div class="source-banner" id="groups-banner"></div>
-        <div class="list-toolbar">
-          <label class="search-control"><span>Search</span><input id="groups-search" type="search" placeholder="Group, reference, pickup or drop-off"></label>
-          <div class="chips" aria-label="WhatsApp vehicle filter"><button class="chip active" data-group-vehicle="all" type="button">All</button><button class="chip" data-group-vehicle="saloon" type="button">Saloon</button><button class="chip" data-group-vehicle="mpv" type="button">MPV</button></div>
-          <label><span>Sort</span><select id="groups-sort"><option value="pickupAsc">Pickup date up</option><option value="pickupDesc">Pickup date down</option><option value="fareDesc">Fare high to low</option></select></label>
-        </div>
+        <section class="filter-surface" aria-label="Groups filters">
+          <div class="filter-row filter-row-main">
+            <div class="chips" aria-label="Groups job period"><button class="chip active" data-groups-preset="all" type="button">All</button><button class="chip" data-groups-preset="upcoming" type="button">Upcoming</button><button class="chip" data-groups-preset="future" type="button">Future</button><button class="chip" data-groups-preset="highFare" type="button">&pound;100+</button></div>
+            <label class="search-control"><span>Search</span><input id="groups-search" type="search" placeholder="Group, reference, pickup or drop-off"></label>
+          </div>
+          <div class="filter-row">
+            <label><span>From</span><input id="groups-date-from" type="date"></label><label><span>To</span><input id="groups-date-to" type="date"></label>
+            <div class="quick-dates" aria-label="Groups quick date filters"><button type="button" data-date-scope="groups" data-date-preset="today">Today</button><button type="button" data-date-scope="groups" data-date-preset="tomorrow">Tomorrow</button><button type="button" data-date-scope="groups" data-date-preset="week">This week</button><button type="button" data-date-scope="groups" data-date-preset="month">This month</button><button type="button" data-date-scope="groups" data-date-preset="nextMonth">Next month</button></div>
+          </div>
+          <div class="filter-row">
+            <div class="chips" aria-label="Groups mileage quick filters"><button class="chip active" data-mileage-scope="groups" data-mileage-value="all" type="button">All mileage</button><button class="chip" data-mileage-scope="groups" data-mileage-value="49+" type="button">49+</button><button class="chip" data-mileage-scope="groups" data-mileage-value="99+" type="button">99+</button></div>
+            <label><span>Mileage</span><select id="groups-mileage"><option value="all">All mileage</option><option value="49+">49+ mi</option><option value="99+">99+ mi</option><option value="0-9">0-9 mi</option><option value="10-49">10-49 mi</option><option value="50-99">50-99 mi</option><option value="100-199">100-199 mi</option><option value="200+">200+ mi</option></select></label>
+            <label><span>Vehicle</span><select id="groups-vehicle"><option value="all">All vehicles</option><option value="saloon">Saloon</option><option value="estate">Estate</option><option value="other">People carrier / MPV</option></select></label>
+            <label><span>London area</span><select id="groups-location"><option value="all">All areas</option><option value="inside">Inside London</option><option value="outside">Outside London</option></select></label>
+            <label><span>Fare</span><select id="groups-fare"><option value="all">All fares</option><option value="0-49">Under &pound;50</option><option value="50-99">&pound;50-&pound;99</option><option value="100-149">&pound;100-&pound;149</option><option value="150-199">&pound;150-&pound;199</option><option value="200+">&pound;200+</option></select></label>
+            <label><span>Sort</span><select id="groups-sort"><option value="pickupAsc">Pickup date up</option><option value="pickupDesc">Pickup date down</option><option value="newest">Latest added</option><option value="fareDesc">Fare high to low</option></select></label>
+            <button class="button ghost" id="groups-clear-filters" type="button">Clear filters</button>
+          </div>
+        </section>
         <div class="bulk-actions hidden" id="groups-bulk"><span id="groups-selected-count">0 selected</span><button class="button danger" data-trash-selected="groups" type="button">Move to Trash</button></div>
         <div class="mobile-categories" data-mobile-tabs="groups"></div><div class="job-columns" id="groups-columns"></div><div class="pager" id="groups-pager"></div>
       </section>
 
       <section class="view" data-view="linker">
-        <div class="linker-overview"><div><span class="section-kicker">REAL RETURN MATCHES</span><strong id="link-count">0 opportunities</strong></div><p id="linker-source-message">PreBook anchors matched to eligible OTS or WhatsApp return work.</p></div>
+        <div class="linker-overview"><div><span class="section-kicker">REAL RETURN MATCHES</span><strong id="link-count">0 links</strong></div><p id="linker-source-message">PreBook bookings matched with confirmed PreBook, live OTS or WhatsApp return work.</p></div>
+        <div class="list-toolbar linker-toolbar"><label><span>London area</span><select id="linker-location"><option value="all">All areas</option><option value="inside">Inside London</option><option value="outside">Outside London</option></select></label><button class="button ghost" id="linker-clear-filters" type="button">Clear filters</button></div>
         <div class="link-list" id="link-list"></div><div class="pager" id="linker-pager"></div>
+        <section class="possible-links" id="possible-links"></section>
+        <section class="archived-links" id="archived-links"></section>
       </section>
 
       <section class="view" data-view="settings">
@@ -111,6 +138,19 @@
             <div id="whatsapp-result" class="inline-result" aria-live="polite"></div>
             <div id="whatsapp-qr" class="qr-card hidden"><img id="whatsapp-qr-image" alt="WhatsApp login QR code"><div><strong>Scan with WhatsApp</strong><p>Open Linked devices, choose Link a device, and scan this code.</p></div></div>
           </section>
+          <section class="settings-panel">
+            <div class="section-head"><div><span class="section-kicker">CONTROLLED OTS BIDDING</span><h2>Auto Bid rules</h2></div><label class="toggle-control" title="Turn Auto Bid on or off"><input id="auto-bid-toggle" type="checkbox" role="switch" disabled><span class="toggle-track"><span class="toggle-thumb"></span></span><strong id="auto-bid-settings-status">Off</strong></label></div>
+            <form id="auto-bid-form" class="form-grid">
+              <label>Date scope<select name="dateScope"><option value="today">Today (UK)</option><option value="tomorrow">Tomorrow (UK)</option><option value="futureExcludingTodayTomorrow">Future (exclude today and tomorrow)</option><option value="currentMonth">Current month</option><option value="currentMonthExcludingTodayTomorrow">Current month (excluding today &amp; tomorrow)</option><option value="futureMonths">Future months (exclude current)</option><option value="nextMonth">Next month</option><option value="custom">Custom range</option><option value="customFrom">From date onward (future)</option></select></label>
+              <label>Minimum mileage<input name="minimumMiles" type="number" min="0" max="1000" step="1" required></label>
+              <div class="custom-date-range hidden" id="auto-bid-custom-range"><label>From<input name="dateFrom" type="date"></label><label id="auto-bid-date-to-field">To<input name="dateTo" type="date"></label></div>
+              <label>Bid deduction from OTS maximum (&pound;)<input name="priceDeduction" type="number" min="0" max="10000" step="0.01" required><small>Enter 0 to bid the OTS maximum. Blank values are not allowed.</small></label>
+              <label>Minimum time before expiry (minutes)<input name="minimumExpiryMinutes" type="number" min="1" max="1440" step="1" required></label>
+              <fieldset class="vehicle-checks"><legend>Vehicles allowed for Auto Bid</legend><div id="auto-bid-vehicles"></div></fieldset>
+              <div class="auto-bid-preview" id="auto-bid-preview">No eligible jobs.</div>
+              <button class="button primary" type="submit">Save Auto Bid rules</button>
+            </form>
+          </section>
           <section class="settings-panel full-width">
             <div class="section-head"><div><span class="section-kicker">INGESTION ACCESS</span><h2>WhatsApp groups</h2></div><div class="button-row compact"><button class="button" id="groups-select-all" type="button">Select all</button><button class="button" id="groups-clear-all" type="button">Clear</button><button class="button primary" id="groups-save" type="button">Save groups</button></div></div>
             <div id="whatsapp-group-list" class="group-list"><div class="empty compact">Connect WhatsApp, then load groups.</div></div>
@@ -123,6 +163,7 @@
 
   <dialog id="login-dialog"><form id="login-form"><span class="brand-mark">A</span><h2>Dashboard access</h2><p>Enter the operator credentials for this browser.</p><label>Access token<input id="token-input" type="password" autocomplete="current-password" required></label><label>Operator name<input id="actor-input" type="text" value="Operator" required></label><button class="button primary full-button" type="submit">Connect</button></form></dialog>
   <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
-  <script src="/app.js" defer></script>
+  <script src="/report.js" defer></script>
+  <script src="/app.js?v=20261019-london-area" defer></script>
 </body>
 </html>
