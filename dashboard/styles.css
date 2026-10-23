@@ -273,7 +273,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .settings-layout { display: grid; grid-template-columns: 1.15fr 1fr; gap: 14px; }
 .settings-panel { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
 .settings-panel.full-width { grid-column: 1 / -1; }
-body.ots-demo [data-demo-hidden], body.ots-demo .sidebar-foot { display: none; }
+body.ots-demo .nav-item[hidden], body.ots-demo [data-demo-hidden], body.ots-demo .sidebar-foot { display: none; }
 body.ots-demo .settings-layout { grid-template-columns: minmax(0, 1fr); }
 body.ots-demo #auto-bid-panel { grid-column: 1; width: 100%; max-width: 980px; }
 .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 15px; }

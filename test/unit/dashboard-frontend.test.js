@@ -124,6 +124,7 @@ test("OTS demo mode keeps live OTS and Auto Bid controls functional while hiding
   assert.match(script, /button\.dataset\.tab === "master" \|\| button\.dataset\.tab === "settings"/);
   assert.match(html, /id="auto-bid-panel"/);
   assert.match(html, /data-demo-hidden/);
+  assert.match(styles, /body\.ots-demo \.nav-item\[hidden\]/);
   assert.match(styles, /body\.ots-demo \[data-demo-hidden\]/);
   assert.match(script, /\/api\/job-linker\/auto-bid\/settings/);
 });
