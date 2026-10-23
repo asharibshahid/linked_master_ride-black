@@ -119,6 +119,15 @@ test("Auto Bid offers the protected current-month scope and editable OTS maximum
   assert.match(script, /values\.dateScope === "customFrom" && !values\.dateFrom/);
 });
 
+test("OTS demo mode keeps live OTS and Auto Bid controls functional while hiding other UI", () => {
+  assert.match(script, /new URLSearchParams\(window\.location\.search\)\.get\("demo"\) === "ots"/);
+  assert.match(script, /button\.dataset\.tab === "master" \|\| button\.dataset\.tab === "settings"/);
+  assert.match(html, /id="auto-bid-panel"/);
+  assert.match(html, /data-demo-hidden/);
+  assert.match(styles, /body\.ots-demo \[data-demo-hidden\]/);
+  assert.match(script, /\/api\/job-linker\/auto-bid\/settings/);
+});
+
 test("Master displays source guide prices and both copy actions use backend copyDetail", () => {
   assert.match(script, /function guidePrice\(job/);
   assert.match(script, /function defaultBidAmount\(job/);

@@ -120,7 +120,7 @@
 
       <section class="view" data-view="settings">
         <div class="settings-layout">
-          <section class="settings-panel">
+          <section class="settings-panel" data-demo-hidden>
             <div class="section-head"><div><span class="section-kicker">SHARED FILTER</span><h2>Matching rules</h2></div></div>
             <form id="criteria-form" class="form-grid">
               <label>Minimum fare (&pound;)<input name="minFare" type="number" min="0" step="1"></label><label>Area match<select name="areaMatchMode"><option value="either">Pickup or drop</option><option value="pickup">Pickup only</option><option value="dropoff">Drop only</option><option value="both">Pickup and drop</option></select></label>
@@ -130,7 +130,7 @@
               <button class="button primary" type="submit">Save rules</button>
             </form>
           </section>
-          <section class="settings-panel">
+          <section class="settings-panel" data-demo-hidden>
             <div class="section-head"><div><span class="section-kicker">LIVE CONNECTIONS</span><h2>Sources</h2></div></div>
             <div id="source-health" class="health-list"></div>
             <div class="button-row"><button class="button" id="sync-button" type="button">Sync jobs</button><button class="button" id="whatsapp-status-button" type="button">Check WhatsApp</button><button class="button" id="whatsapp-groups-button" type="button">Load groups</button></div>
@@ -138,7 +138,7 @@
             <div id="whatsapp-result" class="inline-result" aria-live="polite"></div>
             <div id="whatsapp-qr" class="qr-card hidden"><img id="whatsapp-qr-image" alt="WhatsApp login QR code"><div><strong>Scan with WhatsApp</strong><p>Open Linked devices, choose Link a device, and scan this code.</p></div></div>
           </section>
-          <section class="settings-panel">
+          <section class="settings-panel" id="auto-bid-panel">
             <div class="section-head"><div><span class="section-kicker">CONTROLLED OTS BIDDING</span><h2>Auto Bid rules</h2></div><label class="toggle-control" title="Turn Auto Bid on or off"><input id="auto-bid-toggle" type="checkbox" role="switch" disabled><span class="toggle-track"><span class="toggle-thumb"></span></span><strong id="auto-bid-settings-status">Off</strong></label></div>
             <form id="auto-bid-form" class="form-grid">
               <label>Date scope<select name="dateScope"><option value="today">Today (UK)</option><option value="tomorrow">Tomorrow (UK)</option><option value="futureExcludingTodayTomorrow">Future (exclude today and tomorrow)</option><option value="currentMonth">Current month</option><option value="currentMonthExcludingTodayTomorrow">Current month (excluding today &amp; tomorrow)</option><option value="futureMonths">Future months (exclude current)</option><option value="nextMonth">Next month</option><option value="custom">Custom range</option><option value="customFrom">From date onward (future)</option></select></label>
@@ -151,11 +151,11 @@
               <button class="button primary" type="submit">Save Auto Bid rules</button>
             </form>
           </section>
-          <section class="settings-panel full-width">
+          <section class="settings-panel full-width" data-demo-hidden>
             <div class="section-head"><div><span class="section-kicker">INGESTION ACCESS</span><h2>WhatsApp groups</h2></div><div class="button-row compact"><button class="button" id="groups-select-all" type="button">Select all</button><button class="button" id="groups-clear-all" type="button">Clear</button><button class="button primary" id="groups-save" type="button">Save groups</button></div></div>
             <div id="whatsapp-group-list" class="group-list"><div class="empty compact">Connect WhatsApp, then load groups.</div></div>
           </section>
-          <section class="settings-panel full-width"><div class="section-head"><div><span class="section-kicker">24 HOUR RECOVERY</span><h2>Trash</h2></div></div><div id="trash-list" class="trash-list"></div></section>
+          <section class="settings-panel full-width" data-demo-hidden><div class="section-head"><div><span class="section-kicker">24 HOUR RECOVERY</span><h2>Trash</h2></div></div><div id="trash-list" class="trash-list"></div></section>
         </div>
       </section>
     </main>
@@ -164,6 +164,6 @@
   <dialog id="login-dialog"><form id="login-form"><span class="brand-mark">A</span><h2>Dashboard access</h2><p>Enter the operator credentials for this browser.</p><label>Access token<input id="token-input" type="password" autocomplete="current-password" required></label><label>Operator name<input id="actor-input" type="text" value="Operator" required></label><button class="button primary full-button" type="submit">Connect</button></form></dialog>
   <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
   <script src="/report.js" defer></script>
-  <script src="/app.js?v=20261019-london-area" defer></script>
+  <script src="/app.js?v=20261023-ots-demo" defer></script>
 </body>
 </html>

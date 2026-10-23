@@ -7,6 +7,7 @@
   const TOKEN_KEY = "aceDashboardToken";
   const ACTOR_KEY = "aceDashboardActor";
   const THEME_KEY = "aceDashboardTheme";
+  const OTS_DEMO_MODE = new URLSearchParams(window.location.search).get("demo") === "ots";
   const LONDON_POSTCODE_AREAS = new Set(["E", "EC", "N", "NW", "SE", "SW", "W", "WC"]);
   const UK_POSTCODE_AREAS = new Set([
     "AB", "AL", "B", "BA", "BB", "BD", "BH", "BL", "BN", "BR", "BS", "BT", "CA", "CB", "CF", "CH", "CM", "CO", "CR", "CT", "CV", "CW", "DA", "DD", "DE", "DG", "DH", "DL", "DN", "DT", "DY", "E", "EC", "EH", "EN", "EX", "FK", "FY", "G", "GL", "GU", "GY", "HA", "HD", "HG", "HP", "HR", "HS", "HU", "HX", "IG", "IM", "IP", "IV", "JE", "KA", "KT", "KW", "KY", "L", "LA", "LD", "LE", "LL", "LN", "LS", "LU", "M", "ME", "MK", "ML", "N", "NE", "NG", "NN", "NP", "NR", "NW", "OL", "OX", "PA", "PE", "PH", "PL", "PO", "PR", "RG", "RH", "RM", "S", "SA", "SE", "SG", "SK", "SL", "SM", "SN", "SO", "SP", "SR", "SS", "ST", "SW", "SY", "TA", "TD", "TF", "TN", "TQ", "TR", "TS", "TW", "UB", "W", "WA", "WC", "WD", "WF", "WN", "WR", "WS", "WV", "YO"
@@ -24,6 +25,17 @@
     linker: ["RETURN MATCHING", "Linker", "Realistic return opportunities for confirmed bookings."],
     settings: ["ADMIN", "Settings", "Shared rules, source health, WhatsApp and recovery controls."]
   };
+
+  function applyDemoMode() {
+    if (!OTS_DEMO_MODE) return;
+    document.body.classList.add("ots-demo");
+    $$(".nav-item").forEach((button) => {
+      const visible = button.dataset.tab === "master" || button.dataset.tab === "settings";
+      button.hidden = !visible;
+      if (button.dataset.tab === "master") button.innerHTML = '<span class="nav-code">O</span>OTS Jobs';
+      if (button.dataset.tab === "settings") button.innerHTML = '<span class="nav-code">A</span>Auto Bid';
+    });
+  }
 
   const state = {
     apiBaseUrl: "",
@@ -318,15 +330,20 @@
 
   function setTab(tab, updateHash = true) {
     if (!VIEW_META[tab]) tab = "master";
+    if (OTS_DEMO_MODE && tab !== "master" && tab !== "settings") tab = "master";
     state.tab = tab;
     $$(".nav-item").forEach((button) => button.classList.toggle("active", button.dataset.tab === tab));
     $$(".view").forEach((view) => view.classList.toggle("active", view.dataset.view === tab));
-    const meta = VIEW_META[tab];
+    const meta = OTS_DEMO_MODE && tab === "master"
+      ? ["OTS LIVE JOBS", "OTS Jobs", "Live OTS quotation requests and bidding controls."]
+      : OTS_DEMO_MODE && tab === "settings"
+        ? ["CONTROLLED OTS BIDDING", "Auto Bid", "Configure and run live Auto Bid rules."]
+        : VIEW_META[tab];
     $("#eyebrow").textContent = meta[0];
     $("#page-title").textContent = meta[1];
     $("#page-description").textContent = meta[2];
     if (updateHash) history.replaceState(null, "", `#${tab}`);
-    if (tab === "settings") {
+    if (tab === "settings" && !OTS_DEMO_MODE) {
       startWhatsAppPolling();
       if (!state.groupsLoaded && !state.groupsLoading) loadGroupManager();
     } else {
@@ -1311,13 +1328,14 @@
   (async () => {
     try {
       applyTheme(document.documentElement.dataset.theme);
+      applyDemoMode();
       const configResponse = await fetch("/api/config", { cache: "no-store" });
       const config = await configResponse.json();
       if (!config.ok || !config.apiBaseUrl) throw new Error(config.message || "Dashboard API is not configured.");
       state.apiBaseUrl = config.apiBaseUrl.replace(/\/$/, "");
       setReportRange("2");
       const requestedTab = window.location.hash.replace("#", "");
-      state.tab = VIEW_META[requestedTab] ? requestedTab : "master";
+      state.tab = VIEW_META[requestedTab] && (!OTS_DEMO_MODE || requestedTab === "master" || requestedTab === "settings") ? requestedTab : "master";
       if (!token()) showLogin();
       else await load();
     } catch (error) {
