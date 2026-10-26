@@ -12,6 +12,7 @@
 - The separate PM2 service named `ride-bot` at `/opt/groups-dt` on port `3000` is the single WhatsApp collector. It sends eligible rides directly to the backend through a protected localhost endpoint and continues writing Google Sheets as a backup.
 - `ride-bot` QR recovery is available at `http://194.163.163.37:3000/qr`; it auto-refreshes the QR image and exposes manual Restart and Reset Session controls. It now stays online during QR/session recovery instead of repeatedly crashing while waiting for a scan.
 - The main `taxi-dispatch-v2` backend has `WHATSAPP_ENABLED=false`; it does not launch a competing WhatsApp browser/session.
+- As of 2026-10-26, OTS is hard-disabled by operator request: `OTS_INTEGRATION_ENABLED=false`, `OTS_RUN_PIPELINE=false`, and `JOB_LINKER_OTS_ENABLED=false`. The active `/opt/ride-management-worker/storageState.json` and all seven server-side OTS session backups were permanently removed. Re-enabling OTS requires a fresh manual portal login, a new storage state, and an explicit review before all three flags are restored.
 
 ## Final Client UI
 
